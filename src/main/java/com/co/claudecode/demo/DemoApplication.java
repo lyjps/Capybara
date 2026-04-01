@@ -5,7 +5,8 @@ import com.co.claudecode.demo.agent.ConversationMemory;
 import com.co.claudecode.demo.agent.SimpleContextCompactor;
 import com.co.claudecode.demo.message.ConversationMessage;
 import com.co.claudecode.demo.model.ModelAdapter;
-import com.co.claudecode.demo.model.RuleBasedModelAdapter;
+import com.co.claudecode.demo.model.llm.ModelAdapterFactory;
+import com.co.claudecode.demo.model.llm.ModelRuntimeConfig;
 import com.co.claudecode.demo.tool.PermissionPolicy;
 import com.co.claudecode.demo.tool.Tool;
 import com.co.claudecode.demo.tool.ToolExecutionContext;
@@ -42,7 +43,8 @@ public final class DemoApplication {
                 "优先通过少量高价值工具调用建立事实，再把结论沉淀成产物。"
         ));
 
-        ModelAdapter modelAdapter = new RuleBasedModelAdapter();
+        ModelRuntimeConfig runtimeConfig = ModelRuntimeConfig.fromEnvironment();
+        ModelAdapter modelAdapter = ModelAdapterFactory.create(runtimeConfig);
         List<Tool> tools = List.of(
                 new ListFilesTool(),
                 new ReadFileTool(),
@@ -52,6 +54,7 @@ public final class DemoApplication {
         PermissionPolicy permissionPolicy = new WorkspacePermissionPolicy();
 
         try (ToolOrchestrator toolOrchestrator = new ToolOrchestrator(toolRegistry, permissionPolicy, 4)) {
+            System.out.println("MODEL > provider=" + runtimeConfig.provider() + ", model=" + runtimeConfig.modelName());
             AgentEngine engine = new AgentEngine(memory, modelAdapter, toolOrchestrator, context, 6);
             ConversationMessage finalMessage = engine.run(goal, System.out::println);
 
