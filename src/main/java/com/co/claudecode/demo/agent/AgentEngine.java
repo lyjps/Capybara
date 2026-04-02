@@ -13,6 +13,10 @@ import java.util.function.Consumer;
  * 这里刻意把主循环写得很显式。
  * 对 agent 系统来说，最值得读清楚的不是某个工具细节，而是
  * "消息 -> 工具 -> 消息 -> 下一轮"这条闭环到底如何成立。
+ * <p>
+ * 子 Agent 模式新增：
+ * - {@code agentId} 标识当前 Agent
+ * - {@code agentTask} 用于接收其他 Agent 通过 SendMessage 发来的消息
  */
 public final class AgentEngine {
 
@@ -22,16 +26,34 @@ public final class AgentEngine {
     private final ToolExecutionContext context;
     private final int maxTurns;
 
+    // 子 Agent 系统字段（主 Agent 为 null）
+    private final String agentId;
+    private final AgentTask agentTask;
+
+    /** 主 Agent 构造（向后兼容）。 */
     public AgentEngine(ConversationMemory memory,
                        ModelAdapter modelAdapter,
                        ToolOrchestrator toolOrchestrator,
                        ToolExecutionContext context,
                        int maxTurns) {
+        this(memory, modelAdapter, toolOrchestrator, context, maxTurns, null, null);
+    }
+
+    /** 子 Agent 构造（带 agentId 和 AgentTask 消息队列）。 */
+    public AgentEngine(ConversationMemory memory,
+                       ModelAdapter modelAdapter,
+                       ToolOrchestrator toolOrchestrator,
+                       ToolExecutionContext context,
+                       int maxTurns,
+                       String agentId,
+                       AgentTask agentTask) {
         this.memory = memory;
         this.modelAdapter = modelAdapter;
         this.toolOrchestrator = toolOrchestrator;
         this.context = context;
         this.maxTurns = maxTurns;
+        this.agentId = agentId;
+        this.agentTask = agentTask;
     }
 
     /**
@@ -58,6 +80,17 @@ public final class AgentEngine {
 
     private ConversationMessage executeLoop(Consumer<String> eventSink) {
         for (int turn = 1; turn <= maxTurns; turn++) {
+            // 检查取消信号（子 Agent 可被外部终止）
+            if (agentTask != null && agentTask.isAborted()) {
+                ConversationMessage aborted = ConversationMessage.assistant(
+                        "（Agent 已被取消）", List.of());
+                memory.append(aborted);
+                return aborted;
+            }
+
+            // 检查并消费来自其他 Agent 的消息
+            consumePendingMessages(eventSink);
+
             eventSink.accept("\nTURN  > " + turn);
 
             ConversationMessage assistantMessage = modelAdapter.nextReply(memory.snapshot(), context);
@@ -86,5 +119,22 @@ public final class AgentEngine {
                 "（已达到最大推理轮数，请继续提问或缩小问题范围）", List.of());
         memory.append(fallback);
         return fallback;
+    }
+
+    /**
+     * 消费来自其他 Agent 的待处理消息。
+     * <p>
+     * 对应 TS 原版 {@code QXK()} 消息队列消费逻辑。
+     * 将消息作为 user message 注入到 Memory，供模型下一轮推理时参考。
+     */
+    private void consumePendingMessages(Consumer<String> eventSink) {
+        if (agentTask == null || !agentTask.hasPendingMessages()) {
+            return;
+        }
+        List<String> messages = agentTask.drainMessages();
+        for (String msg : messages) {
+            eventSink.accept("MSG_IN > " + msg);
+            memory.append(ConversationMessage.user("[Message from another agent] " + msg));
+        }
     }
 }

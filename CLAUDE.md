@@ -62,7 +62,46 @@ This is a Java reimplementation of Claude Code's core agent loop — not a line-
 
 `ToolExecutionContext` separates read scope (`workspaceRoot`) from write scope (`artifactRoot`).
 
+9 tools registered: `list_files`, `read_file`, `write_file`, `agent`, `send_message`, `task_create`, `task_get`, `task_list`, `task_update`.
+
+### Agent Subprocess System (agent/)
+
+Thread-level isolation of TS's process-level agent isolation. Each sub-agent runs in its own thread with:
+- Independent `ConversationMemory` (context window isolation)
+- Filtered `ToolRegistry` (per `AgentDefinition.isToolAllowed()`)
+- Independent `AgentEngine` instance
+
+Key classes:
+- `AgentDefinition` — agent type definition record (agentType, allowedTools, disallowedTools, readOnly, maxTurns)
+- `BuiltInAgents` — `GENERAL_PURPOSE` (wildcard tools) and `EXPLORE` (read-only)
+- `AgentRegistry` — ConcurrentHashMap registry of agent type definitions
+- `SubAgentRunner` — `runSync()` blocks, `runAsync()` returns `AsyncAgentHandle` (agentId + CompletableFuture)
+- `AgentTask` — per-agent state tracking with `ConcurrentLinkedQueue<String>` for inter-agent messaging
+- `AgentTaskRegistry` — global task registry, supports find by ID or name, message delivery
+
+Inter-agent communication: `SendMessageTool` enqueues to target's `pendingMessages`; `AgentEngine.consumePendingMessages()` drains queue each turn and injects as user messages.
+
+Recursive protection: sub-agents don't receive AgentTool or SendMessageTool in their filtered tool list.
+
+### Task Management System (task/)
+
+In-memory task store for tracking work items across agents:
+- `Task` — immutable record with wither methods, status (PENDING/IN_PROGRESS/COMPLETED)
+- `TaskStore` — `ConcurrentHashMap` + `AtomicInteger` ID generator, thread-safe CRUD
+- 4 task tools: `task_create`, `task_get`, `task_list`, `task_update` (supports "deleted" status for deletion)
+
 ### Two Entry Points
 
-- `InteractiveApplication` — REPL with streaming, `/quit`, `/clear`, `/model` commands
+- `InteractiveApplication` — REPL with streaming, `/quit`, `/clear`, `/model`, `/agents`, `/tasks` commands
 - `DemoApplication` — single goal execution, non-streaming
+
+## Tests
+
+108 unit tests covering agent definitions, registries, sub-agent execution, task management, and tool interactions. All tests use mock ModelAdapters (no real API needed).
+
+```bash
+mvn test                          # Run all tests
+mvn test -Dtest=AgentToolTest     # Run single test class
+```
+
+**重要重要** 每次代码更新完，都需要在doc目录的文档下面更新实现代码的内容和实现方案的解释说明。

@@ -201,9 +201,15 @@ buildRequestBody(request, stream=true) → doPost(BodyHandlers.ofInputStream()) 
 
 ```
 ToolRegistry
-  ├── ListFilesTool    (list_files)   — 列出目录树，深度 ≤6，过滤隐藏/构建目录
-  ├── ReadFileTool     (read_file)    — 读取文件内容，截断 6000 字符
-  └── WriteFileTool    (write_file)   — 写入文件，仅限 artifactRoot 目录
+  ├── ListFilesTool    (list_files)      — 列出目录树，深度 ≤6，过滤隐藏/构建目录
+  ├── ReadFileTool     (read_file)       — 读取文件内容，截断 6000 字符
+  ├── WriteFileTool    (write_file)      — 写入文件，仅限 artifactRoot 目录
+  ├── AgentTool        (agent)           — 启动子 Agent（同步/异步）
+  ├── SendMessageTool  (send_message)    — Agent 间消息通信
+  ├── TaskCreateTool   (task_create)     — 创建任务
+  ├── TaskGetTool      (task_get)        — 查询任务详情
+  ├── TaskListTool     (task_list)       — 列出所有任务
+  └── TaskUpdateTool   (task_update)     — 更新/删除任务
 ```
 
 每个工具通过 `ToolMetadata` 声明：
@@ -271,6 +277,9 @@ LlmResponse → text + List<ToolCallData>
 - [x] **文件列表** (`list_files`)：递归列出目录结构
 - [x] **文件读取** (`read_file`)：读取文件内容
 - [x] **文件写入** (`write_file`)：在安全沙箱内写入文件
+- [x] **子 Agent 工具** (`agent`)：启动子 Agent 执行多步骤任务，支持同步/异步模式
+- [x] **Agent 通信** (`send_message`)：通过名称或 ID 向其他 Agent 发送消息
+- [x] **任务管理** (`task_create/get/list/update`)：完整的任务 CRUD，支持状态流转和依赖关系
 - [x] **并发执行**：安全的工具可并行执行
 - [x] **权限控制**：路径边界 + 写操作沙箱
 
@@ -326,7 +335,15 @@ src/main/java/com/co/claudecode/demo/
 ├── DemoApplication.java              # 单次任务入口
 ├── InteractiveApplication.java       # 交互式 REPL 入口
 ├── agent/
-│   ├── AgentEngine.java              # 核心 Agent 循环
+│   ├── AgentEngine.java              # 核心 Agent 循环（含子 Agent 消息消费）
+│   ├── AgentDefinition.java          # Agent 类型定义 record
+│   ├── AgentRegistry.java            # Agent 类型注册中心
+│   ├── AgentResult.java              # Agent 执行结果 record
+│   ├── AgentTask.java                # Agent 运行状态追踪（含消息队列）
+│   ├── AgentTaskRegistry.java        # 全局 Agent 任务注册表
+│   ├── AsyncAgentHandle.java         # 异步 Agent 句柄（agentId + Future）
+│   ├── BuiltInAgents.java            # 内置 Agent 定义（general-purpose, Explore）
+│   ├── SubAgentRunner.java           # 子 Agent 执行引擎（同步/异步）
 │   ├── ConversationMemory.java       # 对话记忆与上下文压缩
 │   ├── ContextCompactor.java         # 压缩器接口
 │   └── SimpleContextCompactor.java   # 简单摘要压缩实现
@@ -355,23 +372,321 @@ src/main/java/com/co/claudecode/demo/
 │       ├── LlmResponse.java             # 响应模型
 │       ├── LlmMessage.java              # LLM 消息格式
 │       └── StreamCallback.java           # 流式回调接口
+├── task/
+│   ├── Task.java                     # 任务数据模型 record（不可变 + wither）
+│   ├── TaskStatus.java               # 任务状态枚举（PENDING/IN_PROGRESS/COMPLETED）
+│   └── TaskStore.java                # 内存任务存储（ConcurrentHashMap）
 └── tool/
     ├── Tool.java                     # 工具接口
     ├── ToolMetadata.java             # 工具元数据
+    ├── ToolResult.java               # 工具执行结果 record
     ├── ToolExecutionContext.java      # 执行上下文（workspace + artifact 路径）
     ├── ToolOrchestrator.java         # 工具编排（并发/串行）
     ├── ToolRegistry.java             # 工具注册表
     ├── PermissionPolicy.java         # 权限策略接口
+    ├── PermissionDecision.java       # 权限决策 record
     ├── WorkspacePermissionPolicy.java# 工作区权限实现
     └── impl/
         ├── ListFilesTool.java        # 列出文件
         ├── ReadFileTool.java         # 读取文件
-        └── WriteFileTool.java        # 写入文件
+        ├── WriteFileTool.java        # 写入文件
+        ├── AgentTool.java            # 启动子 Agent 工具
+        ├── SendMessageTool.java      # Agent 间通信工具
+        ├── TaskCreateTool.java       # 创建任务工具
+        ├── TaskGetTool.java          # 查询任务工具
+        ├── TaskListTool.java         # 列出任务工具
+        └── TaskUpdateTool.java       # 更新任务工具
+
+src/test/java/com/co/claudecode/demo/
+├── agent/
+│   ├── AgentDefinitionTest.java      # 7 tests — Agent 定义与工具过滤
+│   ├── AgentRegistryTest.java        # 5 tests — Agent 注册与查找
+│   ├── AgentTaskRegistryTest.java    # 8 tests — 任务注册、消息投递、清理
+│   └── SubAgentRunnerTest.java       # 16 tests — 同步/异步执行、并发
+├── task/
+│   ├── TaskStoreTest.java            # 25 tests — CRUD、并发、状态转换
+│   └── TaskToolsTest.java            # 25 tests — 4 个任务工具完整测试
+└── tool/impl/
+    ├── AgentToolTest.java            # 12 tests — 同步/异步模式、类型解析
+    └── SendMessageToolTest.java      # 10 tests — 消息投递、参数校验
 ```
 
 ---
 
-## 七、设计亮点
+## 七、Agent 子进程系统
+
+### 7.1 设计动机与演进路径
+
+Claude Code 的 TypeScript 原版使用操作系统进程隔离来实现子 Agent（每个 Agent 是独立的 Node.js 进程）。Java 版将这一架构简化为**线程级隔离**：每个子 Agent 在独立线程中运行独立的 `AgentEngine` 实例，拥有独立的 `ConversationMemory`。
+
+```
+单线程 Agent Loop  →  多工具并发执行  →  Agent 子进程（线程隔离）
+                                              │
+                    ┌─────────────────────────┼────────────────────────────┐
+                    ▼                         ▼                            ▼
+              同步子 Agent              异步子 Agent                  Agent 间通信
+           (阻塞等待完成)          (后台执行，立即返回 ID)          (SendMessage 消息队列)
+```
+
+### 7.2 核心架构
+
+```
+┌──────────────────────────────────────────────────────────────────────┐
+│                      Agent 子进程系统                                 │
+│                                                                      │
+│  ┌──────────────┐     ┌──────────────┐     ┌─────────────────┐      │
+│  │AgentDefinition│     │ AgentRegistry │     │BuiltInAgents    │      │
+│  │(Agent 类型定义)│◄────│(类型注册中心) │◄────│(内置 Agent 定义) │      │
+│  └──────┬───────┘     └──────────────┘     └─────────────────┘      │
+│         │                                                            │
+│         ▼                                                            │
+│  ┌──────────────────┐                                               │
+│  │  SubAgentRunner   │ ← 子 Agent 执行引擎                           │
+│  │ ┌──────────────┐ │     ┌───────────────────┐                     │
+│  │ │ runSync()    │ │────►│独立 ConversationMemory                  │
+│  │ │ runAsync()   │ │     │独立 ToolRegistry（过滤后）               │
+│  │ │              │ │     │独立 AgentEngine 实例                     │
+│  │ └──────────────┘ │     └───────────────────┘                     │
+│  └────────┬─────────┘                                               │
+│           │                                                          │
+│           ▼                                                          │
+│  ┌──────────────────┐     ┌──────────────────┐                      │
+│  │ AgentTaskRegistry │◄───│    AgentTask       │                      │
+│  │(全局任务注册表)    │     │(运行状态 + 消息队列)│                      │
+│  └──────────────────┘     └──────────────────┘                      │
+│           │                                                          │
+│           ▼                                                          │
+│  ┌──────────────────┐     ┌──────────────────┐                      │
+│  │    AgentTool      │     │  SendMessageTool  │                      │
+│  │(启动子 Agent)     │     │(Agent 间通信)      │                      │
+│  └──────────────────┘     └──────────────────┘                      │
+└──────────────────────────────────────────────────────────────────────┘
+```
+
+### 7.3 Agent 定义与注册
+
+#### `AgentDefinition` — Agent 类型定义 (record)
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `agentType` | String | 类型标识，如 "general-purpose"、"Explore" |
+| `whenToUse` | String | 什么场景使用此 Agent |
+| `source` | Source | BUILT_IN 或 CUSTOM |
+| `systemPrompt` | String | 系统提示词 |
+| `allowedTools` | List<String> | 允许的工具列表，null = 允许所有 |
+| `disallowedTools` | List<String> | 禁止的工具列表 |
+| `readOnly` | boolean | 是否为只读 Agent |
+| `maxTurns` | int | 最大执行轮次（默认 12） |
+| `model` | String | 可选的模型覆盖 |
+
+**工具过滤逻辑** (`isToolAllowed()`):
+1. 先检查 `disallowedTools` → 命中则拒绝
+2. 若 `allowedTools == null`（通配符）→ 允许
+3. 否则检查 `allowedTools` 是否包含
+
+#### `BuiltInAgents` — 内置 Agent 类型
+
+| Agent 类型 | allowedTools | readOnly | 定位 |
+|-----------|-------------|----------|------|
+| `general-purpose` | null（全部） | false | 通用多步骤任务执行 |
+| `Explore` | [list_files, read_file] | true | 只读代码搜索和探索 |
+
+#### `AgentRegistry` — 类型注册中心
+
+- 基于 `ConcurrentHashMap<String, AgentDefinition>` 存储
+- `withBuiltIns()` 工厂方法注册所有内置 Agent
+- `resolve(type)` 查找并返回，找不到抛异常
+- `findOrNull(type)` 安全查找，找不到返回 null
+
+### 7.4 子 Agent 执行引擎 (`SubAgentRunner`)
+
+核心类，对应 TS 原版 `runAgent()` + `AgentTool.call()` 的逻辑。
+
+**两种执行模式：**
+
+| 模式 | 方法 | 返回值 | 说明 |
+|------|------|--------|------|
+| 同步 | `runSync()` | `AgentResult` | 阻塞等待子 Agent 完成 |
+| 异步 | `runAsync()` | `AsyncAgentHandle` | 立即返回 agentId + CompletableFuture |
+
+**每个子 Agent 拥有完全独立的环境：**
+
+1. **独立 ConversationMemory** — 上下文窗口隔离，不与父 Agent 共享
+2. **过滤后的 ToolRegistry** — 根据 `AgentDefinition.isToolAllowed()` 过滤
+3. **独立 ToolOrchestrator** — 独立的线程池
+4. **独立 AgentEngine** — 独立的执行循环
+
+**递归保护**：子 Agent 的工具集中不包含 `AgentTool` 和 `SendMessageTool`，防止子 Agent 无限嵌套。
+
+**异步执行的 `AsyncAgentHandle` 模式**：
+```java
+// agentId 在提交到线程池之前生成，立即可用
+String agentId = AgentTaskRegistry.generateAgentId();
+AgentTask agentTask = new AgentTask(agentId, ...);
+taskRegistry.register(agentTask);  // 立即注册
+
+CompletableFuture<AgentResult> future = CompletableFuture.supplyAsync(() -> {
+    // 独立线程中执行 Agent 循环
+    ...
+}, executor);
+
+return new AsyncAgentHandle(agentId, agentType, future);
+```
+
+### 7.5 Agent 任务追踪
+
+#### `AgentTask` — 运行状态追踪
+
+每个运行中或已完成的 Agent 实例对应一个 AgentTask：
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `agentId` | String | 8 字符 UUID 前缀 |
+| `name` | String | 可选名称，用于 SendMessage 按名寻址 |
+| `status` | Status | RUNNING / COMPLETED / FAILED / KILLED |
+| `pendingMessages` | ConcurrentLinkedQueue<String> | 接收其他 Agent 的消息 |
+| `aborted` | AtomicBoolean | 外部取消信号 |
+| `result` | AgentResult | 完成后填充 |
+
+#### `AgentTaskRegistry` — 全局注册表
+
+- `ConcurrentHashMap<String, AgentTask>` 按 ID 索引
+- `ConcurrentHashMap<String, String>` 按名称索引（name → agentId）
+- `findByIdOrName()` 支持 ID 或名称查找
+- `sendMessage(target, message)` 投递消息到目标 Agent
+- `allRunning()` 返回所有运行中的 Agent
+- `cleanup()` 清除已完成的任务
+- `generateAgentId()` 生成 8 字符唯一 ID
+
+### 7.6 Agent 间通信
+
+#### 发送端：`SendMessageTool`
+
+```
+参数：to (目标 Agent ID 或名称), message (文本)
+    ↓
+AgentTaskRegistry.sendMessage(to, message)
+    ↓
+AgentTask.enqueueMessage(message) → pendingMessages.add(message)
+```
+
+#### 接收端：`AgentEngine.consumePendingMessages()`
+
+每轮 `executeLoop()` 开始时检查消息队列：
+```
+agentTask.hasPendingMessages()?
+    ↓ yes
+agentTask.drainMessages() → List<String>
+    ↓
+每条消息 → memory.append(ConversationMessage.user("[Message from another agent] " + msg))
+    ↓
+模型下一轮推理时能看到这些消息
+```
+
+### 7.7 任务管理系统
+
+#### 数据模型
+
+`Task` (record) — 不可变，通过 wither 方法更新：
+- `id` (String, 原子递增)、`subject`、`description`
+- `status` (TaskStatus: PENDING / IN_PROGRESS / COMPLETED)
+- `owner` (String, nullable)
+- `blocks` / `blockedBy` (List<String>)
+- `metadata` (Map<String, String>)
+
+`TaskStore` — 内存存储：
+- `ConcurrentHashMap<String, Task>` + `AtomicInteger` ID 生成
+- `updateTask()` 使用 `compute()` 保证原子更新
+- 线程安全，支持多 Agent 并发访问
+
+#### 任务工具
+
+| 工具名 | 参数 | 功能 |
+|--------|------|------|
+| `task_create` | subject, description | 创建任务，返回 ID |
+| `task_get` | taskId | 返回任务详情 |
+| `task_list` | 无 | 返回所有任务摘要 |
+| `task_update` | taskId, status?, subject?, description?, owner?, addBlocks?, addBlockedBy? | 更新任务，status="deleted" 删除 |
+
+### 7.8 AgentEngine 子 Agent 改造
+
+`AgentEngine` 新增两个构造参数（向后兼容）：
+
+| 参数 | 说明 |
+|------|------|
+| `agentId` | 当前 Agent 标识（主 Agent 为 null） |
+| `agentTask` | AgentTask 引用（用于接收消息和检查取消信号） |
+
+`executeLoop()` 每轮新增两项检查：
+1. **取消信号**：`agentTask.isAborted()` → 返回"Agent 已被取消"
+2. **消息消费**：`consumePendingMessages()` → 将队列中的消息注入为 user message
+
+### 7.9 与 TS 原版的对比
+
+| 维度 | TypeScript 原版 | Java 实现 |
+|------|----------------|-----------|
+| 隔离级别 | OS 进程（child_process） | JVM 线程 + 独立 Memory |
+| Agent 定义加载 | 文件系统（.md 解析 + JSON Schema） | 编译时定义（record + 工厂方法） |
+| 工具过滤 | `filterToolsForAgent()` 运行时过滤 | `AgentDefinition.isToolAllowed()` 过滤 |
+| 异步模式 | `async function*` + AbortController | CompletableFuture + AtomicBoolean |
+| 任务存储 | 文件系统 JSON + Zod schema | ConcurrentHashMap + record |
+| 通信协议 | IPC 进程通信 + handleMessage | ConcurrentLinkedQueue 内存队列 |
+| MCP 集成 | initializeAgentMcpServers() | 未实现（超出单进程范围） |
+| Worktree 隔离 | git worktree 目录隔离 | 未实现 |
+| Swarm 模式 | tmux 多终端协作 | 未实现 |
+| Fork 机制 | 父 Agent 对话上下文复制到子 Agent | 未实现 |
+
+### 7.10 入口层集成
+
+`InteractiveApplication` 启动时完成全部初始化：
+
+```
+1. 创建 AgentRegistry → 注册内置 Agent 类型
+2. 创建 AgentTaskRegistry → 全局 Agent 任务注册表
+3. 创建 TaskStore → 全局任务存储
+4. 创建 SubAgentRunner → 子 Agent 执行引擎
+5. 注册 9 个工具：
+   - 文件工具：list_files, read_file, write_file
+   - 任务工具：task_create, task_get, task_list, task_update
+   - Agent 工具：agent, send_message
+6. 创建 ModelAdapter → 通过反射注入到 SubAgentRunner（解决循环依赖）
+```
+
+新增 REPL 命令：
+- `/agents` — 列出所有运行中的子 Agent
+- `/tasks` — 列出所有任务
+
+---
+
+## 八、单元测试
+
+### 测试框架
+
+JUnit 5 (jupiter 5.11.4)，零 mock 框架依赖。所有测试使用 `ECHO_MODEL`（立即返回文本回复的 ModelAdapter lambda）或直接测试纯逻辑，无需真实 API。
+
+### 测试覆盖
+
+| 测试类 | 测试数 | 覆盖范围 |
+|--------|--------|----------|
+| `AgentDefinitionTest` | 7 | 内置 Agent 默认值、工具过滤（通配/显式）、自定义 Agent、验证 |
+| `AgentRegistryTest` | 5 | 注册、查找、冲突处理、findOrNull |
+| `AgentTaskRegistryTest` | 8 | 注册/查找、消息投递、运行状态过滤、清理、ID 唯一性 |
+| `SubAgentRunnerTest` | 16 | 同步/异步执行、失败处理、事件回调、工具过滤、并发 Agent |
+| `TaskStoreTest` | 25 | CRUD、状态转换、并发创建/更新、clear 重置 |
+| `TaskToolsTest` | 25 | 4 个任务工具的完整执行、参数校验、元数据 |
+| `AgentToolTest` | 12 | 同步/异步模式、Agent 类型解析、注册验证、元数据 |
+| `SendMessageToolTest` | 10 | 消息投递（ID/名称）、未知目标、参数校验、多消息 |
+
+**总计：108 个测试，全部通过。**
+
+运行测试：
+```bash
+mvn test
+```
+
+---
+
+## 九、设计亮点
 
 1. **零外部依赖**：整个项目仅使用 JDK 17 标准库，无 Jackson、无 OkHttp、无 Spring，所有 JSON 和 HTTP 操作手写实现，展示了 Java 标准库的完整能力。
 
@@ -384,3 +699,13 @@ src/main/java/com/co/claudecode/demo/
 5. **流式与非流式统一接口**：`StreamCallback` 为可选参数，同一套代码同时支持流式和非流式模式，无需分叉逻辑。
 
 6. **三级配置优先级**：环境变量 → 项目配置 → 内置默认值，兼顾开发便利性和部署灵活性。
+
+7. **线程级 Agent 隔离**：将 TS 的进程级隔离简化为线程级隔离，每个子 Agent 拥有独立的 Memory + ToolRegistry + Engine，既保持了隔离语义又避免了 IPC 开销。
+
+8. **AsyncAgentHandle 模式**：异步 Agent 的 agentId 在提交到线程池之前生成，解决了"需要立即返回 ID 但执行尚未完成"的问题。
+
+9. **ConcurrentLinkedQueue 消息通信**：Agent 间通信使用无锁队列，消费端在 executeLoop() 中定期 drain，无需额外的同步机制。
+
+10. **递归保护**：子 Agent 的过滤工具集自动排除 AgentTool 和 SendMessageTool，防止无限嵌套。
+
+11. **108 项单元测试**：使用 ECHO_MODEL（无需真实 API 的 ModelAdapter lambda）+ 纯逻辑测试，覆盖 Agent 定义、注册、执行、任务管理、工具交互、消息通信全链路。

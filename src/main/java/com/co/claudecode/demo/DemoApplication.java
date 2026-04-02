@@ -13,8 +13,13 @@ import com.co.claudecode.demo.tool.ToolExecutionContext;
 import com.co.claudecode.demo.tool.ToolOrchestrator;
 import com.co.claudecode.demo.tool.ToolRegistry;
 import com.co.claudecode.demo.tool.WorkspacePermissionPolicy;
+import com.co.claudecode.demo.task.TaskStore;
 import com.co.claudecode.demo.tool.impl.ListFilesTool;
 import com.co.claudecode.demo.tool.impl.ReadFileTool;
+import com.co.claudecode.demo.tool.impl.TaskCreateTool;
+import com.co.claudecode.demo.tool.impl.TaskGetTool;
+import com.co.claudecode.demo.tool.impl.TaskListTool;
+import com.co.claudecode.demo.tool.impl.TaskUpdateTool;
 import com.co.claudecode.demo.tool.impl.WriteFileTool;
 
 import java.nio.file.Files;
@@ -44,10 +49,15 @@ public final class DemoApplication {
         ));
 
         ModelRuntimeConfig runtimeConfig = ModelRuntimeConfig.load();
+        TaskStore taskStore = new TaskStore();
         List<Tool> tools = List.of(
                 new ListFilesTool(),
                 new ReadFileTool(),
-                new WriteFileTool()
+                new WriteFileTool(),
+                new TaskCreateTool(taskStore),
+                new TaskGetTool(taskStore),
+                new TaskListTool(taskStore),
+                new TaskUpdateTool(taskStore)
         );
         ToolRegistry toolRegistry = new ToolRegistry(tools);
         ModelAdapter modelAdapter = ModelAdapterFactory.create(runtimeConfig, toolRegistry);
