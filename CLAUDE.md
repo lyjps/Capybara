@@ -36,7 +36,17 @@ This is a Java reimplementation of Claude Code's core agent loop — not a line-
 
 `AgentEngine` runs: user message → model reply → extract `ToolCallBlock`s → `ToolOrchestrator` executes → tool results append to `ConversationMemory` → next model call. Loop exits when model returns no tool calls.
 
-`ConversationMemory` triggers `SimpleContextCompactor` when messages exceed threshold. **Critical constraint**: compaction must never split tool_use/tool_result pairs — Anthropic API returns 400 if a `tool_result` has no matching `tool_use` in a prior assistant message.
+`ConversationMemory` implements a **three-level adaptive context compression** system (matching TS `autoCompact.ts`):
+- Token-budget trigger: `threshold = contextWindowTokens - maxOutputTokens - autoCompactBuffer` (default 170,616 tokens)
+- Level 1 **Micro Compact** (`MicroCompactor`): clears expired tool results, keeps recent N
+- Level 2 **Session Memory Compact** (`SessionMemoryCompactor`): zero-API compression using `SessionMemory` content
+- Level 3 **Full Compact** (`FullCompactor`): structured summary with User Intent / Tool Trace / Key Decisions / Unfinished Work / Recently Accessed Files
+- Circuit breaker: stops after 3 consecutive failures
+- All compactors return unified `CompactResult` record
+
+**Critical constraint**: compaction must never split tool_use/tool_result pairs — Anthropic API returns 400 if a `tool_result` has no matching `tool_use` in a prior assistant message. Protected at three levels: `ConversationMemory.adjustTailForToolPairing()`, `SessionMemoryCompactor.adjustCutPointForToolPairing()`, and `LlmConversationMapper.ensureToolPairing()`.
+
+The `compact/` package contains: `TokenEstimator` (char-level heuristics: ASCII ~4c/token, CJK ~1.5c/token), `MicroCompactConfig`, `SessionMemory` (10-section Markdown template matching TS MDK), `CompactResult`, `CompactType`.
 
 ### Message Protocol (message/)
 
@@ -92,12 +102,12 @@ In-memory task store for tracking work items across agents:
 
 ### Two Entry Points
 
-- `InteractiveApplication` — REPL with streaming, `/quit`, `/clear`, `/model`, `/agents`, `/tasks` commands
+- `InteractiveApplication` — REPL with streaming, `/quit`, `/clear`, `/model`, `/agents`, `/tasks`, `/compact`, `/context` commands
 - `DemoApplication` — single goal execution, non-streaming
 
 ## Tests
 
-108 unit tests covering agent definitions, registries, sub-agent execution, task management, and tool interactions. All tests use mock ModelAdapters (no real API needed).
+223 unit tests covering agent definitions, registries, sub-agent execution, task management, tool interactions, and three-level context compression (TokenEstimator, MicroCompactor, SessionMemory, SessionMemoryCompactor, FullCompactor, ConversationMemory integration). All tests use mock ModelAdapters (no real API needed).
 
 ```bash
 mvn test                          # Run all tests

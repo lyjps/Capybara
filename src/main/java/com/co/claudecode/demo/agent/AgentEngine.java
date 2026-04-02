@@ -1,5 +1,6 @@
 package com.co.claudecode.demo.agent;
 
+import com.co.claudecode.demo.compact.CompactResult;
 import com.co.claudecode.demo.message.ConversationMessage;
 import com.co.claudecode.demo.message.ToolCallBlock;
 import com.co.claudecode.demo.model.ModelAdapter;
@@ -94,11 +95,9 @@ public final class AgentEngine {
             eventSink.accept("\nTURN  > " + turn);
 
             ConversationMessage assistantMessage = modelAdapter.nextReply(memory.snapshot(), context);
-            boolean compactedAfterAssistant = memory.append(assistantMessage);
+            CompactResult compactAfterAssistant = memory.appendAndCompact(assistantMessage);
             eventSink.accept("ASSIST > " + assistantMessage.plainText());
-            if (compactedAfterAssistant) {
-                eventSink.accept("STATE > context compacted");
-            }
+            logCompactEvent(compactAfterAssistant, eventSink);
 
             List<ToolCallBlock> toolCalls = assistantMessage.toolCalls();
             if (toolCalls.isEmpty()) {
@@ -107,10 +106,8 @@ public final class AgentEngine {
 
             List<ConversationMessage> toolResults = toolOrchestrator.execute(toolCalls, context, eventSink);
             for (ConversationMessage toolResult : toolResults) {
-                boolean compactedAfterTool = memory.append(toolResult);
-                if (compactedAfterTool) {
-                    eventSink.accept("STATE > context compacted");
-                }
+                CompactResult compactAfterTool = memory.appendAndCompact(toolResult);
+                logCompactEvent(compactAfterTool, eventSink);
             }
         }
 
@@ -136,5 +133,24 @@ public final class AgentEngine {
             eventSink.accept("MSG_IN > " + msg);
             memory.append(ConversationMessage.user("[Message from another agent] " + msg));
         }
+    }
+
+    /**
+     * 输出压缩事件日志（详细：类型 + Token 节省量）。
+     */
+    private void logCompactEvent(CompactResult result, Consumer<String> eventSink) {
+        if (result != null && result.didCompact()) {
+            eventSink.accept("COMPACT > type=" + result.type()
+                    + ", removed=" + result.messagesRemoved()
+                    + ", saved=" + result.tokensSaved() + " tokens"
+                    + " (" + result.summary() + ")");
+        }
+    }
+
+    /**
+     * 获取 ConversationMemory 引用（用于外部状态查询）。
+     */
+    public ConversationMemory getMemory() {
+        return memory;
     }
 }

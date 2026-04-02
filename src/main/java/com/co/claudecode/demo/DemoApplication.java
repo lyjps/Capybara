@@ -2,7 +2,8 @@ package com.co.claudecode.demo;
 
 import com.co.claudecode.demo.agent.AgentEngine;
 import com.co.claudecode.demo.agent.ConversationMemory;
-import com.co.claudecode.demo.agent.SimpleContextCompactor;
+import com.co.claudecode.demo.compact.MicroCompactConfig;
+import com.co.claudecode.demo.compact.SessionMemory;
 import com.co.claudecode.demo.message.ConversationMessage;
 import com.co.claudecode.demo.model.ModelAdapter;
 import com.co.claudecode.demo.model.llm.ModelAdapterFactory;
@@ -43,7 +44,10 @@ public final class DemoApplication {
         Files.createDirectories(artifactRoot);
 
         ToolExecutionContext context = new ToolExecutionContext(workspaceRoot, artifactRoot);
-        ConversationMemory memory = new ConversationMemory(new SimpleContextCompactor(), 24, 12);
+        ConversationMemory memory = new ConversationMemory(
+                200_000, 16_384, 13_000,
+                new SessionMemory(), MicroCompactConfig.DEFAULT
+        );
         memory.append(ConversationMessage.system(
                 "优先通过少量高价值工具调用建立事实，再把结论沉淀成产物。"
         ));

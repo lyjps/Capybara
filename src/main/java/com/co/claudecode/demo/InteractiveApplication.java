@@ -4,8 +4,9 @@ import com.co.claudecode.demo.agent.AgentEngine;
 import com.co.claudecode.demo.agent.AgentRegistry;
 import com.co.claudecode.demo.agent.AgentTaskRegistry;
 import com.co.claudecode.demo.agent.ConversationMemory;
-import com.co.claudecode.demo.agent.SimpleContextCompactor;
 import com.co.claudecode.demo.agent.SubAgentRunner;
+import com.co.claudecode.demo.compact.MicroCompactConfig;
+import com.co.claudecode.demo.compact.SessionMemory;
 import com.co.claudecode.demo.message.ConversationMessage;
 import com.co.claudecode.demo.model.ModelAdapter;
 import com.co.claudecode.demo.model.llm.ModelAdapterFactory;
@@ -51,11 +52,13 @@ public final class InteractiveApplication {
             ║         Claude Code Java - Interactive       ║
             ╠══════════════════════════════════════════════╣
             ║  Commands:                                   ║
-            ║    /quit   - exit                            ║
-            ║    /clear  - clear conversation history      ║
-            ║    /model  - show current model info         ║
-            ║    /agents - list registered agent types     ║
-            ║    /tasks  - show running agent tasks        ║
+            ║    /quit    - exit                           ║
+            ║    /clear   - clear conversation history     ║
+            ║    /model   - show current model info        ║
+            ║    /agents  - list registered agent types    ║
+            ║    /tasks   - show running agent tasks       ║
+            ║    /compact - force context compaction       ║
+            ║    /context - show token usage stats         ║
             ╚══════════════════════════════════════════════╝
             """;
 
@@ -128,7 +131,17 @@ public final class InteractiveApplication {
         maField.setAccessible(true);
         maField.set(subAgentRunner, modelAdapter);
 
-        ConversationMemory memory = new ConversationMemory(new SimpleContextCompactor(), 24, 12);
+        // ---- 三级上下文压缩系统初始化 ----
+        SessionMemory sessionMemory = new SessionMemory();
+        MicroCompactConfig microCompactConfig = MicroCompactConfig.ENABLED;
+
+        ConversationMemory memory = new ConversationMemory(
+                200_000,    // contextWindowTokens
+                16_384,     // maxOutputTokens
+                13_000,     // autoCompactBuffer
+                sessionMemory,
+                microCompactConfig
+        );
         memory.append(ConversationMessage.system(
                 "你是一个代码分析助手。工作区目录是: " + workspaceRoot
                         + "\n你可以使用 list_files、read_file、write_file 工具来探索和操作文件。"
@@ -211,9 +224,28 @@ public final class InteractiveApplication {
                     continue;
                 }
 
+                if (input.equalsIgnoreCase("/compact")) {
+                    System.out.println("  Forcing context compaction...");
+                    var compactResult = engine.getMemory().forceCompact();
+                    if (compactResult != null && compactResult.didCompact()) {
+                        System.out.println("  " + compactResult.summary());
+                        System.out.println("  Saved " + compactResult.tokensSaved() + " tokens");
+                    } else {
+                        System.out.println("  No compaction needed or possible.");
+                    }
+                    System.out.println();
+                    continue;
+                }
+
+                if (input.equalsIgnoreCase("/context")) {
+                    var stats = engine.getMemory().getContextStats();
+                    System.out.println(stats.format());
+                    continue;
+                }
+
                 if (input.startsWith("/")) {
                     System.out.println("  unknown command: " + input);
-                    System.out.println("  available: /quit /clear /model /agents /tasks\n");
+                    System.out.println("  available: /quit /clear /model /agents /tasks /compact /context\n");
                     continue;
                 }
 
@@ -232,7 +264,13 @@ public final class InteractiveApplication {
     }
 
     private static ConversationMemory resetMemory(Path workspaceRoot) {
-        ConversationMemory memory = new ConversationMemory(new SimpleContextCompactor(), 24, 12);
+        SessionMemory sessionMemory = new SessionMemory();
+        MicroCompactConfig microCompactConfig = MicroCompactConfig.ENABLED;
+
+        ConversationMemory memory = new ConversationMemory(
+                200_000, 16_384, 13_000,
+                sessionMemory, microCompactConfig
+        );
         memory.append(ConversationMessage.system(
                 "你是一个代码分析助手。工作区目录是: " + workspaceRoot
                         + "\n你可以使用 list_files、read_file、write_file 工具来探索和操作文件。"
