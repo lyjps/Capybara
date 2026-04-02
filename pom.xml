@@ -29,6 +29,19 @@
                     <mainClass>com.co.claudecode.demo.DemoApplication</mainClass>
                 </configuration>
             </plugin>
+            <!-- 打包成可执行 fat jar -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-jar-plugin</artifactId>
+                <version>3.4.2</version>
+                <configuration>
+                    <archive>
+                        <manifest>
+                            <mainClass>com.co.claudecode.demo.InteractiveApplication</mainClass>
+                        </manifest>
+                    </archive>
+                </configuration>
+            </plugin>
         </plugins>
     </build>
 </project>

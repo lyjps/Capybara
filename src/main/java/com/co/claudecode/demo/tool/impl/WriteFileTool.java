@@ -9,6 +9,7 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -19,12 +20,16 @@ public final class WriteFileTool implements Tool {
 
     private static final ToolMetadata METADATA = new ToolMetadata(
             "write_file",
-            "把最终结论写入 artifact 目录",
+            "将内容写入 artifact 输出目录中的文件。用于保存分析结论、摘要等产物。",
             false,
             false,
             true,
             ToolMetadata.PathDomain.ARTIFACT,
-            "path"
+            "path",
+            List.of(
+                    new ToolMetadata.ParamInfo("path", "输出文件的相对路径，如 architecture-summary.md", true),
+                    new ToolMetadata.ParamInfo("content", "要写入的文件内容", true)
+            )
     );
 
     @Override

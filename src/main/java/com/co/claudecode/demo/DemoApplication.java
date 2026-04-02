@@ -38,24 +38,24 @@ public final class DemoApplication {
         Files.createDirectories(artifactRoot);
 
         ToolExecutionContext context = new ToolExecutionContext(workspaceRoot, artifactRoot);
-        ConversationMemory memory = new ConversationMemory(new SimpleContextCompactor(), 12, 6);
+        ConversationMemory memory = new ConversationMemory(new SimpleContextCompactor(), 24, 12);
         memory.append(ConversationMessage.system(
                 "优先通过少量高价值工具调用建立事实，再把结论沉淀成产物。"
         ));
 
-        ModelRuntimeConfig runtimeConfig = ModelRuntimeConfig.fromEnvironment();
-        ModelAdapter modelAdapter = ModelAdapterFactory.create(runtimeConfig);
+        ModelRuntimeConfig runtimeConfig = ModelRuntimeConfig.load();
         List<Tool> tools = List.of(
                 new ListFilesTool(),
                 new ReadFileTool(),
                 new WriteFileTool()
         );
         ToolRegistry toolRegistry = new ToolRegistry(tools);
+        ModelAdapter modelAdapter = ModelAdapterFactory.create(runtimeConfig, toolRegistry);
         PermissionPolicy permissionPolicy = new WorkspacePermissionPolicy();
 
         try (ToolOrchestrator toolOrchestrator = new ToolOrchestrator(toolRegistry, permissionPolicy, 4)) {
             System.out.println("MODEL > provider=" + runtimeConfig.provider() + ", model=" + runtimeConfig.modelName());
-            AgentEngine engine = new AgentEngine(memory, modelAdapter, toolOrchestrator, context, 6);
+            AgentEngine engine = new AgentEngine(memory, modelAdapter, toolOrchestrator, context, 12);
             ConversationMessage finalMessage = engine.run(goal, System.out::println);
 
             System.out.println("\nFINAL > " + finalMessage.plainText());

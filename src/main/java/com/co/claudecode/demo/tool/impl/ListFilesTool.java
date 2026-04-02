@@ -9,6 +9,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Comparator;
+import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
@@ -21,12 +22,16 @@ public final class ListFilesTool implements Tool {
 
     private static final ToolMetadata METADATA = new ToolMetadata(
             "list_files",
-            "列出工作区中的高价值文件",
+            "列出工作区中的文件和目录结构。返回格式：每行以 FILE 或 DIR 开头，后跟相对路径。",
             true,
             true,
             false,
             ToolMetadata.PathDomain.WORKSPACE,
-            "path"
+            "path",
+            List.of(
+                    new ToolMetadata.ParamInfo("path", "要列出的目录相对路径，默认 \".\"", false),
+                    new ToolMetadata.ParamInfo("depth", "递归深度，1-6 之间，默认 3", false)
+            )
     );
 
     @Override

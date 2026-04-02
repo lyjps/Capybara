@@ -25,4 +25,8 @@ public final class ToolRegistry {
         }
         return tool;
     }
+
+    public Collection<Tool> allTools() {
+        return toolsByName.values();
+    }
 }

@@ -9,6 +9,7 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -21,12 +22,15 @@ public final class ReadFileTool implements Tool {
 
     private static final ToolMetadata METADATA = new ToolMetadata(
             "read_file",
-            "读取文件并返回受限内容",
+            "读取工作区中的文件内容。返回格式：第一行是 PATH: 相对路径，后续是文件内容（超过 6000 字符会截断）。",
             true,
             true,
             false,
             ToolMetadata.PathDomain.WORKSPACE,
-            "path"
+            "path",
+            List.of(
+                    new ToolMetadata.ParamInfo("path", "要读取的文件相对路径", true)
+            )
     );
 
     @Override

@@ -1,0 +1,22 @@
+# =============================================================
+# Claude Code Java Demo - User Configuration
+# =============================================================
+# Copy this file to application.properties and fill in your values.
+# This file will NOT be committed to git.
+# =============================================================
+
+# Model provider: rules | openai | anthropic
+model.provider=anthropic
+
+# --- Anthropic ---
+anthropic.auth-token=your-auth-token-here
+anthropic.model=aws.claude-sonnet-4.6
+anthropic.base-url=https://aigc.sankuai.com/v1/anthropic/
+
+# --- OpenAI (if using openai provider) ---
+# openai.api-key=sk-your-key-here
+# openai.model=gpt-4.1-mini
+# openai.base-url=https://api.openai.com/v1
+
+# --- General ---
+max-output-tokens=8000
