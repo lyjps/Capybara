@@ -2,12 +2,15 @@ package com.co.claudecode.demo.model.llm;
 
 import com.co.claudecode.demo.message.ContentBlock;
 import com.co.claudecode.demo.message.ConversationMessage;
+import com.co.claudecode.demo.message.MessageRole;
 import com.co.claudecode.demo.message.SummaryBlock;
 import com.co.claudecode.demo.message.TextBlock;
 import com.co.claudecode.demo.message.ToolCallBlock;
 import com.co.claudecode.demo.message.ToolResultBlock;
+import com.co.claudecode.demo.prompt.SystemPromptSections;
 import com.co.claudecode.demo.tool.Tool;
 import com.co.claudecode.demo.tool.ToolMetadata;
+import com.co.claudecode.demo.tool.ToolSearchUtils;
 
 import java.util.ArrayList;
 import java.util.Collection;
@@ -25,13 +28,36 @@ import java.util.Set;
  */
 public final class LlmConversationMapper {
 
+    /**
+     * 标准转换（不含延迟加载过滤，全量发送工具 schema）。
+     */
     public LlmRequest toRequest(List<ConversationMessage> conversation, String modelName,
                                 Collection<Tool> tools) {
+        return toRequest(conversation, modelName, tools, tools);
+    }
+
+    /**
+     * 带延迟加载的转换：{@code allTools} 用于判定 deferLoading 标志，
+     * {@code filteredTools} 是实际要发送 schema 的工具子集。
+     * <p>
+     * 对应 TS {@code claude.ts} 中 queryModel 的逻辑：
+     * <ul>
+     *   <li>{@code filteredTools} 由 {@link ToolSearchUtils#filterToolsForApi} 过滤得到</li>
+     *   <li>每个 schema 的 {@code deferLoading} 标志由 {@link ToolSearchUtils#willDeferLoading} 决定</li>
+     * </ul>
+     *
+     * @param conversation  完整会话消息列表
+     * @param modelName     模型名
+     * @param filteredTools 经过延迟加载过滤后的工具集合（实际发送 schema 的子集）
+     * @param allTools      全量工具集合（用于判定 deferLoading 标志）
+     */
+    public LlmRequest toRequest(List<ConversationMessage> conversation, String modelName,
+                                Collection<Tool> filteredTools, Collection<Tool> allTools) {
 
         // 收集 system prompt 和 summary（compact 产物）
         StringBuilder systemPrompt = new StringBuilder();
         for (ConversationMessage msg : conversation) {
-            if (msg.role().name().equals("SYSTEM")) {
+            if (msg.role() == MessageRole.SYSTEM) {
                 String text = extractSystemText(msg);
                 if (!text.isBlank()) {
                     if (!systemPrompt.isEmpty()) systemPrompt.append("\n\n");
@@ -40,13 +66,13 @@ public final class LlmConversationMapper {
             }
         }
         if (systemPrompt.isEmpty()) {
-            systemPrompt.append("You are an agentic coding assistant.");
+            systemPrompt.append(SystemPromptSections.ROLE_AND_GUIDELINES);
         }
 
         // 收集非 SYSTEM 消息
         List<LlmMessage> rawMessages = new ArrayList<>();
         for (ConversationMessage msg : conversation) {
-            if (msg.role().name().equals("SYSTEM")) {
+            if (msg.role() == MessageRole.SYSTEM) {
                 continue;
             }
             rawMessages.addAll(mapMessage(msg));
@@ -55,8 +81,9 @@ public final class LlmConversationMapper {
         // 修复配对：确保每个 tool_result 都有对应的 tool_use
         List<LlmMessage> messages = ensureToolPairing(rawMessages);
 
-        List<LlmRequest.ToolSchema> toolSchemas = tools.stream()
-                .map(this::mapTool)
+        // 构建工具 schema，带 deferLoading 标志
+        List<LlmRequest.ToolSchema> toolSchemas = filteredTools.stream()
+                .map(tool -> mapToolWithDeferFlag(tool, allTools))
                 .toList();
 
         return new LlmRequest(systemPrompt.toString(), messages, modelName, toolSchemas);
@@ -142,11 +169,15 @@ public final class LlmConversationMapper {
         return result;
     }
 
-    private LlmRequest.ToolSchema mapTool(Tool tool) {
+    /**
+     * 将工具映射为带 deferLoading 标志的 schema。
+     */
+    private LlmRequest.ToolSchema mapToolWithDeferFlag(Tool tool, Collection<Tool> allTools) {
         ToolMetadata meta = tool.metadata();
         List<LlmRequest.ToolSchema.ParamSchema> params = meta.params().stream()
                 .map(p -> new LlmRequest.ToolSchema.ParamSchema(p.name(), p.description(), p.required()))
                 .toList();
-        return new LlmRequest.ToolSchema(meta.name(), meta.description(), params);
+        boolean deferLoading = ToolSearchUtils.willDeferLoading(tool, allTools);
+        return new LlmRequest.ToolSchema(meta.name(), meta.description(), params, deferLoading);
     }
 }

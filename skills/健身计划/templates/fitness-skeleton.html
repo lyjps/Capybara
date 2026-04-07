@@ -1,0 +1,613 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{{FITNESS_GOAL}} · 健身计划</title>
+
+  <!-- Tailwind CSS -->
+  <link href="https://lf3-cdn-tos.bytecdntp.com/cdn/expire-1-M/tailwindcss/2.2.19/tailwind.min.css" rel="stylesheet">
+  <!-- Font Awesome -->
+  <link rel="stylesheet" href="https://lf6-cdn-tos.bytecdntp.com/cdn/expire-100-M/font-awesome/6.0.0/css/all.min.css">
+  <!-- 中文字体 -->
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@400;500;600;700&family=Noto+Sans+SC:wght@300;400;500;700&display=swap" rel="stylesheet">
+  <!-- Leaflet.js 地图 -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+
+  <style>
+    /* ===== CSS 变量 — 健身活力主题 ===== */
+    :root {
+      --primary: #E74C3C;        /* 活力红 */
+      --primary-light: #F1948A;
+      --primary-dark: #C0392B;
+      --secondary: #2C3E50;      /* 深灰蓝 */
+      --secondary-light: #5D7B93;
+      --accent: #27AE60;         /* 健康绿 */
+      --accent-light: #D5F5E3;
+      --accent-dark: #1E8449;
+      --warning: #F39C12;        /* 警示橙 */
+      --bg-warm: #FDF6F5;        /* 微红暖色背景 */
+      --bg-cool: #EBF5FB;        /* 浅蓝冷色背景 */
+      --bg-green: #EAFAF1;       /* 浅绿背景 */
+      --bg-white: #FFFFFF;
+      --text-dark: #2D3436;
+      --text-light: #636E72;
+      --text-muted: #B2BEC3;
+      --border-light: #E8E8E8;
+      --card-shadow: 0 4px 20px rgba(0,0,0,0.08);
+      --card-hover-shadow: 0 8px 30px rgba(0,0,0,0.12);
+      --radius-sm: 8px;
+      --radius-md: 16px;
+      --radius-lg: 24px;
+      --spacing-xs: 0.5rem;
+      --spacing-sm: 1rem;
+      --spacing-md: 1.5rem;
+      --spacing-lg: 2rem;
+      --spacing-xl: 3rem;
+
+      /* 强度色块 */
+      --intensity-low: #27AE60;
+      --intensity-mid: #F39C12;
+      --intensity-high: #E74C3C;
+
+      /* 营养素颜色 */
+      --color-protein: #E74C3C;
+      --color-carbs: #F39C12;
+      --color-fat: #3498DB;
+    }
+
+    /* ===== 全局样式 ===== */
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Noto Sans SC', -apple-system, BlinkMacSystemFont, sans-serif;
+      color: var(--text-dark);
+      background: var(--bg-warm);
+      line-height: 1.7;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    h1, h2, h3, h4 {
+      font-family: 'Noto Serif SC', serif;
+      font-weight: 600;
+      line-height: 1.3;
+    }
+
+    /* ===== Hero 模块 ===== */
+    .hero {
+      background: linear-gradient(135deg, var(--secondary) 0%, var(--primary) 50%, var(--primary-dark) 100%);
+      color: white;
+      padding: var(--spacing-xl) var(--spacing-md);
+      text-align: center;
+      position: relative;
+      overflow: hidden;
+    }
+    .hero::before {
+      content: '';
+      position: absolute;
+      top: -50%; left: -50%;
+      width: 200%; height: 200%;
+      background: radial-gradient(circle, rgba(255,255,255,0.08) 0%, transparent 70%);
+      animation: float 20s ease-in-out infinite;
+    }
+    @keyframes float {
+      0%, 100% { transform: translate(0, 0); }
+      50% { transform: translate(30px, -30px); }
+    }
+    .hero h1 {
+      font-size: 2.5rem;
+      font-weight: 700;
+      margin-bottom: var(--spacing-xs);
+      position: relative;
+    }
+    .hero .subtitle {
+      font-size: 1.1rem;
+      opacity: 0.9;
+      position: relative;
+    }
+    .hero .calorie-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      background: rgba(255,255,255,0.2);
+      backdrop-filter: blur(10px);
+      padding: 0.5rem 1rem;
+      border-radius: 50px;
+      margin-top: var(--spacing-sm);
+      font-size: 0.95rem;
+      font-weight: 600;
+      position: relative;
+    }
+
+    /* ===== 内容容器 ===== */
+    .container {
+      max-width: 768px;
+      margin: 0 auto;
+      padding: 0 var(--spacing-sm);
+    }
+
+    /* ===== 区块标题 ===== */
+    .section-title {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      margin: var(--spacing-xl) 0 var(--spacing-md);
+    }
+    .section-title i {
+      font-size: 1.5rem;
+      color: var(--primary);
+      width: 40px; height: 40px;
+      display: flex; align-items: center; justify-content: center;
+      background: #FDEDEC;
+      border-radius: 50%;
+    }
+    .section-title h2 {
+      font-size: 1.5rem;
+      color: var(--text-dark);
+    }
+
+    /* ===== 身体数据统计卡 ===== */
+    .stat-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: var(--spacing-sm);
+      margin-bottom: var(--spacing-md);
+    }
+    .stat-card {
+      background: var(--bg-white);
+      border-radius: var(--radius-md);
+      padding: var(--spacing-md);
+      text-align: center;
+      box-shadow: var(--card-shadow);
+    }
+    .stat-card .stat-value {
+      font-size: 1.8rem;
+      font-weight: 700;
+      color: var(--primary);
+      line-height: 1.2;
+    }
+    .stat-card .stat-label {
+      font-size: 0.8rem;
+      color: var(--text-light);
+      margin-top: 0.25rem;
+    }
+    .stat-card.accent .stat-value { color: var(--accent); }
+    .stat-card.warning .stat-value { color: var(--warning); }
+
+    /* ===== 健身房对比卡片 ===== */
+    .gym-card {
+      background: var(--bg-white);
+      border-radius: var(--radius-md);
+      box-shadow: var(--card-shadow);
+      margin-bottom: var(--spacing-sm);
+      padding: var(--spacing-md);
+      border-left: 4px solid var(--primary);
+      transition: box-shadow 0.3s ease;
+    }
+    .gym-card:hover { box-shadow: var(--card-hover-shadow); }
+    .gym-card.recommended { border-left-color: var(--accent); }
+    .gym-card .gym-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      margin-bottom: 0.5rem;
+    }
+    .gym-card .gym-name {
+      font-size: 1.1rem;
+      font-weight: 600;
+    }
+    .gym-card .gym-rating {
+      color: var(--warning);
+      font-weight: 700;
+      font-size: 1rem;
+    }
+    .gym-card .gym-meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.75rem;
+      font-size: 0.85rem;
+      color: var(--text-light);
+      margin-bottom: 0.5rem;
+    }
+    .gym-card .gym-tags {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.4rem;
+    }
+    .facility-tag {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.2rem;
+      padding: 0.15rem 0.5rem;
+      border-radius: 50px;
+      font-size: 0.75rem;
+      background: var(--bg-cool);
+      color: var(--secondary);
+    }
+    .deal-tag {
+      display: inline-block;
+      background: var(--accent-light);
+      color: var(--accent-dark);
+      padding: 0.15rem 0.5rem;
+      border-radius: 4px;
+      font-size: 0.75rem;
+      font-weight: 500;
+      margin-top: 0.5rem;
+    }
+
+    /* ===== 训练计划周表格 ===== */
+    .training-table {
+      width: 100%;
+      border-collapse: separate;
+      border-spacing: 0;
+      background: var(--bg-white);
+      border-radius: var(--radius-md);
+      box-shadow: var(--card-shadow);
+      overflow: hidden;
+      margin-bottom: var(--spacing-md);
+    }
+    .training-table th {
+      background: var(--secondary);
+      color: white;
+      padding: 0.6rem 0.4rem;
+      font-size: 0.8rem;
+      font-weight: 500;
+      text-align: center;
+    }
+    .training-table td {
+      padding: 0.5rem;
+      font-size: 0.8rem;
+      text-align: center;
+      border-bottom: 1px solid var(--border-light);
+      vertical-align: top;
+    }
+    .training-table .rest-day {
+      color: var(--text-muted);
+      font-style: italic;
+    }
+    .training-table .training-content {
+      font-weight: 500;
+      margin-bottom: 0.2rem;
+    }
+    .intensity-dot {
+      display: inline-block;
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      margin-right: 0.25rem;
+    }
+    .intensity-low { background: var(--intensity-low); }
+    .intensity-mid { background: var(--intensity-mid); }
+    .intensity-high { background: var(--intensity-high); }
+
+    /* 训练详情卡片 */
+    .workout-card {
+      background: var(--bg-white);
+      border-radius: var(--radius-md);
+      box-shadow: var(--card-shadow);
+      margin-bottom: var(--spacing-sm);
+      overflow: hidden;
+    }
+    .workout-card .workout-header {
+      background: var(--secondary);
+      color: white;
+      padding: 0.75rem var(--spacing-md);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      cursor: pointer;
+    }
+    .workout-card .workout-header h4 {
+      font-size: 1rem;
+      font-weight: 600;
+      color: white;
+    }
+    .workout-card .workout-body {
+      padding: var(--spacing-md);
+    }
+    .exercise-item {
+      display: flex;
+      align-items: flex-start;
+      gap: 0.75rem;
+      padding: 0.4rem 0;
+      font-size: 0.9rem;
+    }
+    .exercise-item .exercise-name { font-weight: 500; }
+    .exercise-item .exercise-detail { color: var(--text-light); font-size: 0.85rem; }
+
+    /* ===== 膳食卡片 ===== */
+    .meal-card {
+      background: var(--bg-white);
+      border-radius: var(--radius-md);
+      box-shadow: var(--card-shadow);
+      margin-bottom: var(--spacing-sm);
+      padding: var(--spacing-md);
+      border-left: 4px solid var(--accent);
+    }
+    .meal-card .meal-title {
+      font-weight: 600;
+      font-size: 1rem;
+      margin-bottom: 0.25rem;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+    .meal-card .meal-items {
+      font-size: 0.9rem;
+      color: var(--text-light);
+      margin-bottom: 0.5rem;
+    }
+    .meal-card .meal-macros {
+      display: flex;
+      gap: 0.75rem;
+      font-size: 0.8rem;
+    }
+    .macro-tag {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.2rem;
+      padding: 0.15rem 0.5rem;
+      border-radius: 50px;
+      font-weight: 500;
+    }
+    .macro-protein { background: #FDEDEC; color: var(--color-protein); }
+    .macro-carbs { background: #FEF9E7; color: #B7950B; }
+    .macro-fat { background: #EBF5FB; color: var(--color-fat); }
+    .macro-cal { background: #F4F6F7; color: var(--text-dark); font-weight: 600; }
+
+    /* 外卖店推荐卡片 */
+    .delivery-card {
+      background: var(--bg-white);
+      border-radius: var(--radius-sm);
+      padding: var(--spacing-sm);
+      margin-bottom: var(--spacing-sm);
+      border-left: 4px solid var(--warning);
+      box-shadow: 0 2px 8px rgba(0,0,0,0.04);
+    }
+    .delivery-card .shop-name { font-weight: 600; font-size: 1rem; }
+    .delivery-card .shop-meta {
+      font-size: 0.85rem;
+      color: var(--text-light);
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.75rem;
+    }
+
+    /* ===== 营养素比例条 ===== */
+    .nutrition-bar-container {
+      margin-bottom: var(--spacing-md);
+    }
+    .nutrition-bar {
+      display: flex;
+      height: 24px;
+      border-radius: 12px;
+      overflow: hidden;
+      margin-bottom: 0.5rem;
+    }
+    .nutrition-bar .bar-protein { background: var(--color-protein); }
+    .nutrition-bar .bar-carbs { background: var(--color-carbs); }
+    .nutrition-bar .bar-fat { background: var(--color-fat); }
+    .nutrition-legend {
+      display: flex;
+      justify-content: center;
+      gap: 1.5rem;
+      font-size: 0.85rem;
+    }
+    .legend-item {
+      display: flex;
+      align-items: center;
+      gap: 0.3rem;
+    }
+    .legend-dot {
+      width: 10px; height: 10px;
+      border-radius: 50%;
+    }
+
+    /* ===== 地图 ===== */
+    #gym-map {
+      width: 100%;
+      height: 350px;
+      border-radius: var(--radius-md);
+      box-shadow: var(--card-shadow);
+      z-index: 1;
+    }
+
+    /* ===== 导航链接 ===== */
+    .nav-link {
+      color: var(--primary-dark);
+      text-decoration: none;
+      cursor: pointer;
+      border-bottom: 1px dashed var(--primary-light);
+      transition: color 0.2s;
+    }
+    .nav-link:hover { color: var(--accent); }
+
+    /* ===== 实用信息 ===== */
+    .info-card {
+      background: var(--bg-white);
+      border-radius: var(--radius-md);
+      padding: var(--spacing-md);
+      box-shadow: var(--card-shadow);
+      margin-bottom: var(--spacing-sm);
+    }
+    .info-card h4 {
+      font-size: 1rem;
+      margin-bottom: 0.5rem;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+    .info-card h4 i { color: var(--primary); }
+    .tip-list {
+      list-style: none;
+      padding: 0;
+    }
+    .tip-list li {
+      display: flex;
+      align-items: flex-start;
+      gap: 0.75rem;
+      padding: 0.4rem 0;
+      font-size: 0.9rem;
+    }
+    .tip-list li i {
+      color: var(--accent);
+      margin-top: 0.25rem;
+      min-width: 1rem;
+    }
+
+    /* ===== 免责声明 ===== */
+    .disclaimer {
+      background: #F8F9F9;
+      border-radius: var(--radius-sm);
+      padding: var(--spacing-md);
+      margin-top: var(--spacing-lg);
+      border: 1px solid var(--border-light);
+    }
+    .disclaimer h4 {
+      font-size: 0.9rem;
+      color: var(--text-light);
+      margin-bottom: 0.5rem;
+    }
+    .disclaimer p {
+      font-size: 0.8rem;
+      color: var(--text-muted);
+      line-height: 1.6;
+    }
+
+    /* ===== 加载占位样式 ===== */
+    .loading-placeholder {
+      background: var(--bg-white);
+      border-radius: var(--radius-md);
+      padding: var(--spacing-lg);
+      box-shadow: var(--card-shadow);
+      text-align: center;
+      color: var(--text-muted);
+    }
+    .loading-placeholder i {
+      font-size: 2rem;
+      margin-bottom: var(--spacing-sm);
+      animation: pulse 1.5s ease-in-out infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 0.4; }
+      50% { opacity: 1; }
+    }
+
+    /* ===== 页脚 ===== */
+    .footer {
+      text-align: center;
+      padding: var(--spacing-lg) var(--spacing-sm);
+      color: var(--text-muted);
+      font-size: 0.85rem;
+    }
+
+    /* ===== 响应式 ===== */
+    @media (max-width: 640px) {
+      .hero h1 { font-size: 1.75rem; }
+      .section-title h2 { font-size: 1.25rem; }
+      #gym-map { height: 280px; }
+      .container { padding: 0 0.75rem; }
+      .stat-grid { grid-template-columns: repeat(2, 1fr); gap: 0.5rem; }
+      .stat-card .stat-value { font-size: 1.4rem; }
+      .training-table th, .training-table td { padding: 0.4rem 0.2rem; font-size: 0.7rem; }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- ===== Step 2: Hero（由 Edit 替换此占位符） ===== -->
+  <!-- {{HERO_CONTENT}} -->
+
+  <main class="container">
+
+    <!-- ===== Step 2: 身体数据卡片（由 Edit 替换此占位符） ===== -->
+    <div class="section-title">
+      <i class="fas fa-chart-bar"></i>
+      <h2>身体数据 & 目标</h2>
+    </div>
+    <!-- {{BODY_STATS}} -->
+
+    <!-- ===== Step 3: 健身房推荐（由 Edit 替换此占位符） ===== -->
+    <div class="section-title">
+      <i class="fas fa-dumbbell"></i>
+      <h2>推荐健身房</h2>
+    </div>
+    <!-- {{GYM_CARDS}} -->
+
+    <!-- ===== Step 3: 健身房地图 ===== -->
+    <div class="section-title">
+      <i class="fas fa-map-marked-alt"></i>
+      <h2>位置地图</h2>
+    </div>
+    <div id="gym-map"></div>
+
+    <!-- ===== Step 4: 训练计划（由 Edit 替换此占位符） ===== -->
+    <div class="section-title">
+      <i class="fas fa-calendar-alt"></i>
+      <h2>每周训练计划</h2>
+    </div>
+    <!-- {{TRAINING_PLAN}} -->
+
+    <!-- ===== Step 5: 膳食方案（由 Edit 替换此占位符） ===== -->
+    <div class="section-title">
+      <i class="fas fa-utensils"></i>
+      <h2>膳食方案</h2>
+    </div>
+    <!-- {{MEAL_PLAN}} -->
+
+    <!-- ===== Step 6: 营养数据可视化（由 Edit 替换此占位符） ===== -->
+    <div class="section-title">
+      <i class="fas fa-chart-pie"></i>
+      <h2>每日营养目标</h2>
+    </div>
+    <!-- {{NUTRITION_DATA}} -->
+
+    <!-- ===== Step 7: 实用信息（由 Edit 替换此占位符） ===== -->
+    <div class="section-title">
+      <i class="fas fa-lightbulb"></i>
+      <h2>实用贴士</h2>
+    </div>
+    <!-- {{PRACTICAL_INFO}} -->
+
+    <!-- ===== Step 7: 免责声明（由 Edit 替换此占位符） ===== -->
+    <!-- {{DISCLAIMER}} -->
+
+  </main>
+
+  <footer class="footer">
+    <p>💪 由美团「小团」健身计划师精心制作 · {{GENERATION_DATE}}</p>
+  </footer>
+
+  <script>
+    // ===== 导航功能 =====
+    function navigateTo(name, lat, lng) {
+      const ua = navigator.userAgent;
+      let url;
+      if (/android/i.test(ua)) {
+        url = `androidamap://navi?sourceApplication=fitness&poiname=${encodeURIComponent(name)}&lat=${lat}&lon=${lng}&dev=0`;
+      } else if (/iphone|ipad|ipod/i.test(ua)) {
+        url = `iosamap://navi?sourceApplication=fitness&poiname=${encodeURIComponent(name)}&lat=${lat}&lon=${lng}&dev=0`;
+      } else {
+        url = `https://uri.amap.com/navigation?to=${lng},${lat},${encodeURIComponent(name)}&mode=car&coordinate=gaode`;
+      }
+      window.location.href = url;
+    }
+
+    // ===== 卡片折叠功能 =====
+    function toggleCard(el) {
+      const body = el.nextElementSibling;
+      const icon = el.querySelector('.toggle-icon');
+      if (body.style.display === 'none') {
+        body.style.display = 'block';
+        if (icon) icon.className = 'fas fa-chevron-up toggle-icon';
+      } else {
+        body.style.display = 'none';
+        if (icon) icon.className = 'fas fa-chevron-down toggle-icon';
+      }
+    }
+
+    // ===== Step 3: Leaflet 地图初始化（由 Edit 替换此占位符） =====
+    // {{MAP_INIT_SCRIPT}}
+  </script>
+</body>
+</html>

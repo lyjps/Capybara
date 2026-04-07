@@ -29,4 +29,11 @@ public final class ToolRegistry {
     public Collection<Tool> allTools() {
         return toolsByName.values();
     }
+
+    /**
+     * 返回已注册的工具数量。
+     */
+    public int size() {
+        return toolsByName.size();
+    }
 }

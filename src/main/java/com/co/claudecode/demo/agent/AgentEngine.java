@@ -4,8 +4,13 @@ import com.co.claudecode.demo.compact.CompactResult;
 import com.co.claudecode.demo.message.ConversationMessage;
 import com.co.claudecode.demo.message.ToolCallBlock;
 import com.co.claudecode.demo.model.ModelAdapter;
+import com.co.claudecode.demo.model.llm.StreamCallback;
 import com.co.claudecode.demo.tool.ToolExecutionContext;
 import com.co.claudecode.demo.tool.ToolOrchestrator;
+import com.co.claudecode.demo.tool.ToolRegistry;
+import com.co.claudecode.demo.tool.streaming.StreamingToolCallback;
+import com.co.claudecode.demo.tool.streaming.StreamingToolConfig;
+import com.co.claudecode.demo.tool.streaming.StreamingToolExecutor;
 
 import java.util.List;
 import java.util.function.Consumer;
@@ -31,16 +36,23 @@ public final class AgentEngine {
     private final String agentId;
     private final AgentTask agentTask;
 
-    /** 主 Agent 构造（向后兼容）。 */
+    // 流式工具执行字段
+    private final StreamCallback streamCallback;
+    private final ToolRegistry toolRegistry;
+
+    /** 当前轮次的流式工具执行器（每轮重置）。 */
+    private volatile StreamingToolExecutor streamingToolExecutor;
+
+    /** 主 Agent 构造（向后兼容，无流式工具执行）。 */
     public AgentEngine(ConversationMemory memory,
                        ModelAdapter modelAdapter,
                        ToolOrchestrator toolOrchestrator,
                        ToolExecutionContext context,
                        int maxTurns) {
-        this(memory, modelAdapter, toolOrchestrator, context, maxTurns, null, null);
+        this(memory, modelAdapter, toolOrchestrator, context, maxTurns, null, null, null, null);
     }
 
-    /** 子 Agent 构造（带 agentId 和 AgentTask 消息队列）。 */
+    /** 子 Agent 构造（带 agentId 和 AgentTask 消息队列，无流式工具执行）。 */
     public AgentEngine(ConversationMemory memory,
                        ModelAdapter modelAdapter,
                        ToolOrchestrator toolOrchestrator,
@@ -48,6 +60,24 @@ public final class AgentEngine {
                        int maxTurns,
                        String agentId,
                        AgentTask agentTask) {
+        this(memory, modelAdapter, toolOrchestrator, context, maxTurns, agentId, agentTask, null, null);
+    }
+
+    /**
+     * 完整构造（支持流式工具执行）。
+     *
+     * @param streamCallback 流式回调（用于构建 StreamingToolCallback）
+     * @param toolRegistry   工具注册表（用于查找 concurrencySafe）
+     */
+    public AgentEngine(ConversationMemory memory,
+                       ModelAdapter modelAdapter,
+                       ToolOrchestrator toolOrchestrator,
+                       ToolExecutionContext context,
+                       int maxTurns,
+                       String agentId,
+                       AgentTask agentTask,
+                       StreamCallback streamCallback,
+                       ToolRegistry toolRegistry) {
         this.memory = memory;
         this.modelAdapter = modelAdapter;
         this.toolOrchestrator = toolOrchestrator;
@@ -55,6 +85,8 @@ public final class AgentEngine {
         this.maxTurns = maxTurns;
         this.agentId = agentId;
         this.agentTask = agentTask;
+        this.streamCallback = streamCallback;
+        this.toolRegistry = toolRegistry;
     }
 
     /**
@@ -80,6 +112,9 @@ public final class AgentEngine {
     }
 
     private ConversationMessage executeLoop(Consumer<String> eventSink) {
+        // 判断是否启用流式工具执行
+        boolean streamingEnabled = isStreamingToolExecutionEnabled();
+
         for (int turn = 1; turn <= maxTurns; turn++) {
             // 检查取消信号（子 Agent 可被外部终止）
             if (agentTask != null && agentTask.isAborted()) {
@@ -94,17 +129,39 @@ public final class AgentEngine {
 
             eventSink.accept("\nTURN  > " + turn);
 
-            ConversationMessage assistantMessage = modelAdapter.nextReply(memory.snapshot(), context);
+            // 流式 vs 经典 模型调用
+            ConversationMessage assistantMessage;
+            if (streamingEnabled) {
+                assistantMessage = callModelWithStreamingTools(eventSink);
+            } else {
+                assistantMessage = modelAdapter.nextReply(memory.snapshot(), context);
+            }
+
             CompactResult compactAfterAssistant = memory.appendAndCompact(assistantMessage);
             eventSink.accept("ASSIST > " + assistantMessage.plainText());
             logCompactEvent(compactAfterAssistant, eventSink);
 
             List<ToolCallBlock> toolCalls = assistantMessage.toolCalls();
             if (toolCalls.isEmpty()) {
+                // 清理流式执行器（如果没有工具调用但执行器可能已存在）
+                cleanupStreamingExecutor();
                 return assistantMessage;
             }
 
-            List<ConversationMessage> toolResults = toolOrchestrator.execute(toolCalls, context, eventSink);
+            // 收集工具执行结果
+            List<ConversationMessage> toolResults;
+            if (streamingToolExecutor != null && streamingToolExecutor.hasTools()) {
+                // 流式路径：工具已在 SSE 流中开始执行，等待所有结果
+                eventSink.accept("STREAM > awaiting " + streamingToolExecutor.toolCount()
+                        + " streamed tool results...");
+                toolResults = streamingToolExecutor.awaitAllResults();
+                cleanupStreamingExecutor();
+            } else {
+                // 经典路径：SSE 结束后批量执行
+                toolOrchestrator.setCurrentConversation(memory.snapshot());
+                toolResults = toolOrchestrator.execute(toolCalls, context, eventSink);
+            }
+
             for (ConversationMessage toolResult : toolResults) {
                 CompactResult compactAfterTool = memory.appendAndCompact(toolResult);
                 logCompactEvent(compactAfterTool, eventSink);
@@ -116,6 +173,60 @@ public final class AgentEngine {
                 "（已达到最大推理轮数，请继续提问或缩小问题范围）", List.of());
         memory.append(fallback);
         return fallback;
+    }
+
+    /**
+     * 使用流式工具回调调用模型。
+     * <p>
+     * 创建 StreamingToolExecutor 和 StreamingToolCallback，
+     * 将 callback 传给 modelAdapter.nextReply() 的新重载。
+     * SSE 流中每个 tool_use block 完成时，callback 会通知 executor 立即调度执行。
+     */
+    private ConversationMessage callModelWithStreamingTools(Consumer<String> eventSink) {
+        // 创建本轮的流式执行器
+        StreamingToolExecutor executor = new StreamingToolExecutor(
+                toolOrchestrator, toolRegistry, context, eventSink, 4);
+        this.streamingToolExecutor = executor;
+
+        // 设置会话快照（用于 schema-not-sent 提示）
+        toolOrchestrator.setCurrentConversation(memory.snapshot());
+
+        // 构建复合回调：既打印文本 token，又通知工具完成
+        StreamingToolCallback toolCallback = new StreamingToolCallback() {
+            @Override
+            public void onTextToken(String token) {
+                if (streamCallback != null) {
+                    streamCallback.onTextToken(token);
+                }
+            }
+
+            @Override
+            public void onToolUseComplete(com.co.claudecode.demo.message.ToolCallBlock toolCall) {
+                executor.addTool(toolCall);
+            }
+        };
+
+        return modelAdapter.nextReply(memory.snapshot(), context, toolCallback);
+    }
+
+    /**
+     * 判断是否应启用流式工具执行。
+     */
+    private boolean isStreamingToolExecutionEnabled() {
+        if (streamCallback == null || toolRegistry == null) {
+            return false;
+        }
+        return StreamingToolConfig.isEnabled(streamCallback, toolRegistry.size());
+    }
+
+    /**
+     * 清理流式工具执行器。
+     */
+    private void cleanupStreamingExecutor() {
+        if (streamingToolExecutor != null) {
+            streamingToolExecutor.close();
+            streamingToolExecutor = null;
+        }
     }
 
     /**

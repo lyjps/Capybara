@@ -22,10 +22,20 @@ import com.co.claudecode.demo.tool.impl.TaskGetTool;
 import com.co.claudecode.demo.tool.impl.TaskListTool;
 import com.co.claudecode.demo.tool.impl.TaskUpdateTool;
 import com.co.claudecode.demo.tool.impl.WriteFileTool;
+import com.co.claudecode.demo.mcp.McpConfigLoader;
+import com.co.claudecode.demo.mcp.McpServerConfig;
+import com.co.claudecode.demo.mcp.client.McpConnectionManager;
+import com.co.claudecode.demo.mcp.tool.ListMcpResourcesTool;
+import com.co.claudecode.demo.mcp.tool.MappedToolRegistry;
+import com.co.claudecode.demo.mcp.tool.McpToolBridge;
+import com.co.claudecode.demo.mcp.tool.ReadMcpResourceTool;
+import com.co.claudecode.demo.prompt.SystemPromptBuilder;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 
 public final class DemoApplication {
 
@@ -44,17 +54,37 @@ public final class DemoApplication {
         Files.createDirectories(artifactRoot);
 
         ToolExecutionContext context = new ToolExecutionContext(workspaceRoot, artifactRoot);
+        ModelRuntimeConfig runtimeConfig = ModelRuntimeConfig.load();
+
         ConversationMemory memory = new ConversationMemory(
                 200_000, 16_384, 13_000,
                 new SessionMemory(), MicroCompactConfig.DEFAULT
         );
         memory.append(ConversationMessage.system(
-                "优先通过少量高价值工具调用建立事实，再把结论沉淀成产物。"
+                SystemPromptBuilder.buildDemoPrompt(workspaceRoot, runtimeConfig.modelName())
         ));
-
-        ModelRuntimeConfig runtimeConfig = ModelRuntimeConfig.load();
         TaskStore taskStore = new TaskStore();
-        List<Tool> tools = List.of(
+
+        // MCP 加载（amap + xt-search + mt-map 全部通过 MCP 协议直连）
+        List<McpServerConfig> mcpConfigs = McpConfigLoader.loadConfigs(workspaceRoot);
+        McpConnectionManager mcpManager = new McpConnectionManager(System.out::println);
+        if (!mcpConfigs.isEmpty()) {
+            mcpManager.connectAll(mcpConfigs);
+        }
+
+        // amap 工具：直通桥接
+        Set<String> directBridgeServers = Set.of("amap-maps");
+        List<Tool> mcpTools = McpToolBridge.createForServers(mcpManager, directBridgeServers);
+        if (mcpManager.hasAnyResources()) {
+            mcpTools = new ArrayList<>(mcpTools);
+            mcpTools.add(new ListMcpResourcesTool(mcpManager));
+            mcpTools.add(new ReadMcpResourceTool(mcpManager));
+        }
+
+        // xt-search + mt-map 工具：映射桥接
+        List<Tool> mappedTools = MappedToolRegistry.createAllTools(mcpManager);
+
+        List<Tool> tools = new ArrayList<>(List.of(
                 new ListFilesTool(),
                 new ReadFileTool(),
                 new WriteFileTool(),
@@ -62,7 +92,10 @@ public final class DemoApplication {
                 new TaskGetTool(taskStore),
                 new TaskListTool(taskStore),
                 new TaskUpdateTool(taskStore)
-        );
+        ));
+        tools.addAll(mcpTools);
+        tools.addAll(mappedTools);
+
         ToolRegistry toolRegistry = new ToolRegistry(tools);
         ModelAdapter modelAdapter = ModelAdapterFactory.create(runtimeConfig, toolRegistry);
         PermissionPolicy permissionPolicy = new WorkspacePermissionPolicy();
@@ -74,6 +107,8 @@ public final class DemoApplication {
 
             System.out.println("\nFINAL > " + finalMessage.plainText());
             System.out.println("FILE  > " + artifactRoot.resolve("architecture-summary.md"));
+        } finally {
+            mcpManager.close();
         }
     }
 }

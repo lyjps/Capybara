@@ -25,10 +25,23 @@ public final class ToolOrchestrator implements AutoCloseable {
     private final PermissionPolicy permissionPolicy;
     private final ExecutorService executorService;
 
+    /**
+     * 当前会话消息快照（用于 buildSchemaNotSentHint 判断）。
+     * 在每次 execute 调用前由外部设置。
+     */
+    private volatile List<ConversationMessage> currentConversation = List.of();
+
     public ToolOrchestrator(ToolRegistry toolRegistry, PermissionPolicy permissionPolicy, int maxConcurrency) {
         this.toolRegistry = toolRegistry;
         this.permissionPolicy = permissionPolicy;
         this.executorService = Executors.newFixedThreadPool(maxConcurrency);
+    }
+
+    /**
+     * 设置当前会话消息快照，用于 schema-not-sent 提示判断。
+     */
+    public void setCurrentConversation(List<ConversationMessage> conversation) {
+        this.currentConversation = conversation != null ? conversation : List.of();
     }
 
     public List<ConversationMessage> execute(List<ToolCallBlock> calls,
@@ -91,7 +104,13 @@ public final class ToolOrchestrator implements AutoCloseable {
         try {
             tool = toolRegistry.require(call.toolName());
         } catch (Exception error) {
-            return errorResult(call.id(), error.getMessage());
+            // 工具未注册 — 检查是否可以给出 schema-not-sent 提示
+            String errorMsg = error.getMessage();
+            String hint = buildSchemaNotSentHintForUnknown(call.toolName());
+            if (hint != null) {
+                errorMsg = (errorMsg != null ? errorMsg : "Unknown tool") + hint;
+            }
+            return errorResult(call.id(), errorMsg);
         }
 
         eventSink.accept("TOOL  > " + tool.metadata().name() + " " + summarizeInput(call.input()));
@@ -108,12 +127,63 @@ public final class ToolOrchestrator implements AutoCloseable {
             }
 
             ToolResult result = tool.execute(call.input(), context);
+            // 执行失败时追加 schema-not-sent 提示
+            if (result.error()) {
+                String hint = ToolSearchUtils.buildSchemaNotSentHint(
+                        tool, currentConversation, toolRegistry.allTools());
+                if (hint != null) {
+                    return ConversationMessage.toolResult(
+                            new ToolResultBlock(call.id(), tool.metadata().name(), true,
+                                    result.content() + hint)
+                    );
+                }
+            }
             return ConversationMessage.toolResult(
                     new ToolResultBlock(call.id(), tool.metadata().name(), result.error(), result.content())
             );
         } catch (Exception error) {
-            return errorResult(call.id(), error.getMessage());
+            // 执行异常时追加 schema-not-sent 提示
+            String errorMsg = error.getMessage() != null ? error.getMessage() : "执行异常";
+            String hint = ToolSearchUtils.buildSchemaNotSentHint(
+                    tool, currentConversation, toolRegistry.allTools());
+            if (hint != null) {
+                errorMsg += hint;
+            }
+            return errorResult(call.id(), errorMsg);
         }
+    }
+
+    /**
+     * 执行单个工具调用（公开接口，供 {@code StreamingToolExecutor} 使用）。
+     * <p>
+     * 与内部 {@code executeSingle()} 相同逻辑，但提供 public 可见性，
+     * 使得流式工具执行器可以单独调度每个工具的执行。
+     *
+     * @param call      工具调用块
+     * @param context   工具执行上下文
+     * @param eventSink 事件输出回调
+     * @return 工具执行结果消息
+     */
+    public ConversationMessage executeSingleTool(ToolCallBlock call,
+                                                  ToolExecutionContext context,
+                                                  Consumer<String> eventSink) {
+        return executeSingle(call, context, eventSink);
+    }
+
+    /**
+     * 当工具名在注册表中找不到时，检查是否工具搜索可以帮助发现它。
+     * 这处理了模型"猜测"一个延迟工具名的情况。
+     */
+    private String buildSchemaNotSentHintForUnknown(String toolName) {
+        if (!ToolSearchUtils.isToolSearchEnabledOptimistic()) {
+            return null;
+        }
+        if (!ToolSearchUtils.isToolSearchToolAvailable(toolRegistry.allTools())) {
+            return null;
+        }
+        return "\n\nThis tool may be available but its schema was not loaded. "
+                + "Try calling " + ToolSearchUtils.TOOL_SEARCH_TOOL_NAME
+                + " with query \"select:" + toolName + "\" to discover and load it.";
     }
 
     private ConversationMessage errorResult(String toolUseId, String message) {

@@ -58,7 +58,7 @@
 - 终端交互界面，持续读取用户输入
 - 支持命令：`/quit`（退出）、`/clear`（清空对话历史）、`/model`（显示模型信息）、`/compact`（手动触发压缩）、`/context`（显示 Token 用量统计）
 - 支持 **流式输出**：通过 `StreamCallback` 实现打字机效果
-- 启动方式：`java -jar target/claude-code-java-demo-1.0-SNAPSHOT.jar [工作区路径]`
+- 启动方式：`java -jar target/Capybara-1.0-SNAPSHOT.jar [工作区路径]`
 
 ### 3.2 Agent 引擎（`AgentEngine`）
 
@@ -511,6 +511,41 @@ src/main/java/com/co/claudecode/demo/
 │       ├── LlmResponse.java             # 响应模型
 │       ├── LlmMessage.java              # LLM 消息格式
 │       └── StreamCallback.java           # 流式回调接口
+├── mcp/
+│   ├── McpTransportType.java         # 传输类型枚举（STDIO/SSE/HTTP）
+│   ├── McpConnectionState.java       # 连接状态枚举（PENDING/CONNECTED/FAILED/DISABLED）
+│   ├── McpServerConfig.java          # 服务器配置 record
+│   ├── McpServerConnection.java      # 连接状态持有者
+│   ├── McpToolInfo.java              # 工具信息 record
+│   ├── McpResourceInfo.java          # 资源信息 record
+│   ├── McpNameUtils.java             # 命名工具（mcp__<server>__<tool> 约定）
+│   ├── McpConfigLoader.java          # 配置发现 + 环境变量展开
+│   ├── McpPermissionPolicy.java      # MCP 感知的权限策略
+│   ├── protocol/
+│   │   ├── JsonRpcRequest.java       # JSON-RPC 2.0 请求
+│   │   ├── JsonRpcResponse.java      # JSON-RPC 2.0 响应
+│   │   ├── JsonRpcError.java         # JSON-RPC 错误码
+│   │   └── SimpleJsonParser.java     # 零依赖 JSON 工具
+│   ├── transport/
+│   │   ├── McpTransport.java              # 传输层接口
+│   │   ├── StdioTransport.java            # 子进程 stdin/stdout 传输
+│   │   ├── StreamableHttpTransport.java   # Streamable HTTP 传输（POST 一发一收，支持动态 header）
+│   │   └── LegacySseTransport.java        # 经典 SSE 双通道传输（GET /sse + POST /message）
+│   ├── auth/
+│   │   ├── McpAuthConfig.java             # OAuth2 认证配置 record
+│   │   └── JwtTokenProvider.java          # HS256 JWT + 2步 OAuth 认证 + token 缓存
+│   ├── client/
+│   │   ├── McpClient.java                 # MCP 客户端
+│   │   ├── McpInitResult.java             # 初始化结果
+│   │   ├── McpResourceContent.java        # 资源内容
+│   │   └── McpConnectionManager.java      # 多服务器连接管理器（SSE/HTTP/STDIO 路由）
+│   └── tool/
+│       ├── McpToolBridge.java             # MCP 工具 → Tool 直通适配器
+│       ├── MappedMcpTool.java             # 带名称映射+参数注入的 MCP 工具适配器
+│       ├── ToolMapping.java               # 工具名称映射规则 record（字面/模板）
+│       ├── MappedToolRegistry.java        # 映射工具工厂（12个美团/地图工具定义）
+│       ├── ListMcpResourcesTool.java      # 内建: 列出 MCP 资源
+│       └── ReadMcpResourceTool.java       # 内建: 读取 MCP 资源
 ├── task/
 │   ├── Task.java                     # 任务数据模型 record（不可变 + wither）
 │   ├── TaskStatus.java               # 任务状态枚举（PENDING/IN_PROGRESS/COMPLETED）
@@ -550,6 +585,33 @@ src/test/java/com/co/claudecode/demo/
 │   ├── FullCompactorTest.java        # 22 tests — 结构化摘要、用户意图、文件恢复
 │   ├── ConversationMemoryTest.java   # 21 tests — 三级压缩、熔断、向后兼容
 │   └── CompactIntegrationTest.java   # 8 tests — 端到端压缩流水线验证
+├── mcp/
+│   ├── protocol/
+│   │   ├── SimpleJsonParserTest.java     # 33 tests — JSON 构建/解析/转义/嵌套/数组
+│   │   └── JsonRpcMessageTest.java       # 8 tests — 请求序列化/响应解析/错误码
+│   ├── transport/
+│   │   ├── StdioTransportTest.java            # 10 tests — 启动/发送/接收/关闭/错误
+│   │   ├── StreamableHttpTransportTest.java   # 10 tests — 状态/URL/动态header/错误
+│   │   └── LegacySseTransportTest.java        # 14 tests — 状态/URL解析/endpoint解析/origin检查/open竞态保护
+│   ├── auth/
+│   │   ├── McpAuthConfigTest.java             # 4 tests — 验证/空字段/访问器
+│   │   └── JwtTokenProviderTest.java          # 11 tests — JWT构造/HS256/Base64URL/缓存
+│   ├── client/
+│   │   ├── McpClientTest.java                 # 14 tests — initialize/tools/resources/截断
+│   │   └── McpConnectionManagerTest.java      # 12 tests — 批量连接/禁用/失败/查询
+│   ├── tool/
+│   │   ├── McpToolBridgeTest.java             # 11 tests — 元数据/参数/execute/工厂
+│   │   ├── ToolMappingTest.java               # 14 tests — 字面/模板映射/参数注入/删除
+│   │   ├── MappedMcpToolTest.java             # 8 tests — 元数据/映射/execute错误/空输入
+│   │   ├── MappedToolRegistryTest.java        # 18 tests — 搜索/地图/全量/模板/服务器名
+│   │   ├── ListMcpResourcesToolTest.java      # 5 tests — 元数据/空结果/过滤
+│   │   └── ReadMcpResourceToolTest.java       # 6 tests — 元数据/验证/错误处理
+│   ├── McpNameUtilsTest.java                  # 15 tests — 规范化/构建/解析/前缀
+│   ├── McpServerConfigTest.java               # 10 tests — 工厂/传输类型/禁用/auth
+│   ├── McpServerConnectionTest.java           # 10 tests — 状态转换/格式化
+│   ├── McpConfigLoaderTest.java               # 17 tests — 文件解析/环境变量/合并
+│   ├── McpPermissionPolicyTest.java           # 8 tests — 委托/允许/拒绝/优先级
+│   └── McpIntegrationTest.java                # 8 tests — 端到端集成验证
 ├── task/
 │   ├── TaskStoreTest.java            # 25 tests — CRUD、并发、状态转换
 │   └── TaskToolsTest.java            # 25 tests — 4 个任务工具完整测试
@@ -792,16 +854,91 @@ agentTask.drainMessages() → List<String>
 2. 创建 AgentTaskRegistry → 全局 Agent 任务注册表
 3. 创建 TaskStore → 全局任务存储
 4. 创建 SubAgentRunner → 子 Agent 执行引擎
-5. 注册 9 个工具：
+5. 加载 MCP 配置 (.mcp.json + ~/.claude/settings.json)
+6. McpConnectionManager.connectAll() → 批量连接 MCP 服务器（amap=stdio, xt-search=SSE, mt-map=HTTP+JWT）
+7. McpToolBridge.createForServers(mgr, {"amap-maps"}) → amap 工具直通适配
+8. MappedToolRegistry.createAllTools(mgr) → 创建 12 个映射工具（美团搜索+美团地图）
+9. 如有资源 → 添加 ListMcpResourcesTool + ReadMcpResourceTool
+10. 注册 9+ 工具：
    - 文件工具：list_files, read_file, write_file
    - 任务工具：task_create, task_get, task_list, task_update
    - Agent 工具：agent, send_message
-6. 创建 ModelAdapter → 通过反射注入到 SubAgentRunner（解决循环依赖）
+   - MCP 直通工具：mcp__amap-maps__<tool>（动态数量）
+   - MCP 映射工具：meituan_search_mix, content_search, mt_map_geo 等（12个）
+   - MCP 内建：mcp_list_resources, mcp_read_resource（如有资源）
+11. 创建 ModelAdapter → 通过反射注入到 SubAgentRunner（解决循环依赖）
 ```
 
 新增 REPL 命令：
 - `/agents` — 列出所有运行中的子 Agent
 - `/tasks` — 列出所有任务
+- `/mcp` — 显示 MCP 服务器连接状态（含 xt-search/mt-map/amap-maps）
+
+---
+
+## 七-B、System Prompt 架构（prompt/）
+
+### 设计理念
+
+面向美团生活场景 Agent「小团」的**模块化、分段式** prompt 构建。采用固定段（角色定义 + 系统规范 + 输出风格）+ 动态段（环境信息 + 语言 + CLAUDE.md + MCP 指令 + 可用工具 + 工具结果提醒）的组合方式。
+
+### Prompt 内容定位
+
+本项目是一个**外卖/生活场景 Agent**，而非 AI 编程助手。System prompt 的核心内容围绕：
+- 美团Agent「小团」的角色定义和行为准则
+- 美团搜索 / 内容搜索 / 美团地图等工具的串联使用原则
+- 搜索结果完整性三原则（混合结果判读、空结果重试、穷举验证）
+- 推荐商家/商品时的输出格式规范
+
+### 核心类
+
+| 类 | 职责 |
+|---|------|
+| `SystemPromptSections` | 6 个静态文本常量（ROLE_AND_GUIDELINES、SYSTEM、OUTPUT_STYLE、DEFAULT_AGENT_PROMPT、AGENT_NOTES、TOOL_RESULT_SUMMARY），全部为中文 |
+| `EnvironmentInfo` | 收集运行时环境（CWD、Git 状态、Platform、Java 版本、Shell、模型名），`isGitRepo()` 向上遍历查找 `.git` |
+| `SystemPromptBuilder` | 动态段生成 + 3 个组装方法 |
+
+### 静态段说明
+
+| 常量 | 内容 |
+|------|------|
+| `ROLE_AND_GUIDELINES` | 美团Agent「小团」角色定义 + 重要提醒（坚持满足用户需求、工具使用原则、搜索结果完整性三原则） |
+| `SYSTEM` | 系统行为规范（Markdown 格式、并行工具调用、注入防护、自动压缩历史） |
+| `OUTPUT_STYLE` | 输出风格（简洁有结构、推荐给关键信息、列表/表格对比、不确定要标注） |
+| `DEFAULT_AGENT_PROMPT` | 子代理兜底 prompt |
+| `AGENT_NOTES` | 子代理执行指引（绝对路径、不用 emoji） |
+| `TOOL_RESULT_SUMMARY` | 工具结果提醒（记录商家名称、地址、评分、价格） |
+
+### 三个组装方法
+
+| 方法 | 用途 | 包含段 |
+|------|------|--------|
+| `buildMainPrompt()` | 交互式 REPL | ROLE_AND_GUIDELINES + SYSTEM + availableTools + OUTPUT_STYLE + env + language + memory + mcp + toolResultSummary |
+| `buildDemoPrompt()` | 单任务模式 | ROLE_AND_GUIDELINES + OUTPUT_STYLE + env + memory |
+| `buildAgentPrompt()` | 子 Agent | AgentDefinition.systemPrompt (或 DEFAULT_AGENT_PROMPT) + AGENT_NOTES + env + memory |
+
+### 动态段说明
+
+- **availableToolsSection**: 根据 `enabledToolNames` 集合按需列出美团搜索类（meituan_search_mix、content_search、id_detail_pro、meituan_search_poi）、美团地图类（mt_map_geo、mt_map_regeo 等 8 个）、MCP 直通工具（mcp__ 前缀）、Agent/Task 工具的中文描述
+- **memorySection**: 读取工作区根目录 `CLAUDE.md` 文件内容注入 prompt（如不存在则跳过）
+- **mcpInstructionsSection**: 从已连接 MCP 服务器收集 `instructions` 字段，格式化为 `## serverName\n{instructions}` 块
+- **languageSection**: 基于配置注入 `"请始终使用{language}回复用户"` 指令
+
+### 调用链路
+
+```
+InteractiveApplication.main()
+  └── SystemPromptBuilder.buildMainPrompt(workspace, model, toolNames, mcpMgr, "Chinese")
+        ├── ROLE_AND_GUIDELINES                     ← 固定：角色定义 + 重要提醒
+        ├── SYSTEM                                  ← 固定：系统规范
+        ├── availableToolsSection(toolNames)        ← 动态：可用工具概览
+        ├── OUTPUT_STYLE                            ← 固定：输出风格
+        ├── EnvironmentInfo.collect(cwd, model)     ← 动态：环境信息
+        ├── languageSection("Chinese")              ← 动态：语言
+        ├── memorySection(workspace)                ← 动态：CLAUDE.md
+        ├── mcpInstructionsSection(mcpManager)      ← 动态：MCP 指令
+        └── TOOL_RESULT_SUMMARY                     ← 固定：工具结果提醒
+```
 
 ---
 
@@ -830,8 +967,31 @@ JUnit 5 (jupiter 5.11.4)，零 mock 框架依赖。所有测试使用 `ECHO_MODE
 | `TaskToolsTest` | 25 | 4 个任务工具的完整执行、参数校验、元数据 |
 | `AgentToolTest` | 12 | 同步/异步模式、Agent 类型解析、注册验证、元数据 |
 | `SendMessageToolTest` | 10 | 消息投递（ID/名称）、未知目标、参数校验、多消息 |
+| `SimpleJsonParserTest` | 33 | JSON 构建/解析/转义/嵌套/数组/Unicode |
+| `JsonRpcMessageTest` | 8 | JSON-RPC 请求序列化/响应解析/错误码常量 |
+| `McpNameUtilsTest` | 15 | 规范化/构建/解析/前缀/isMcpTool/displayName |
+| `McpServerConfigTest` | 10 | stdio/sse/http/httpWithAuth 工厂方法/disabled/isLocal/isRemote/auth |
+| `McpServerConnectionTest` | 10 | 状态转换/重连计数/工具列表/资源/格式化 |
+| `McpConfigLoaderTest` | 17 | .mcp.json 解析/settings 解析/环境变量展开/配置合并/边界 |
+| `StdioTransportTest` | 10 | 进程启动/JSON-RPC 读写/关闭序列/错误处理 |
+| `StreamableHttpTransportTest` | 10 | HTTP 状态管理/URL 验证/动态header/未打开错误 |
+| `LegacySseTransportTest` | 14 | SSE 状态管理/URL 解析/endpoint 解析/origin 安全检查/open 竞态保护 |
+| `McpAuthConfigTest` | 4 | 配置验证/空字段/record 访问器 |
+| `JwtTokenProviderTest` | 11 | JWT 三段构造/HS256 签名/Base64URL/jti唯一/缓存失败 |
+| `McpClientTest` | 14 | initialize 握手/listTools/callTool/resources/输出截断/错误 |
+| `McpConnectionManagerTest` | 12 | 批量连接/disabled/failed/查询/callTool 路由/常量 |
+| `McpToolBridgeTest` | 11 | 元数据映射/参数转换/execute 委托/错误处理/工厂 |
+| `ToolMappingTest` | 14 | 字面映射/模板映射/参数注入/参数删除/空值处理 |
+| `MappedMcpToolTest` | 8 | 元数据/映射规则/execute 错误处理/空输入/模板解析 |
+| `MappedToolRegistryTest` | 18 | 搜索工具数量/地图工具数量/全量/唯一名/模板检查/服务器名 |
+| `ListMcpResourcesToolTest` | 5 | 元数据/无资源/过滤/空过滤 |
+| `ReadMcpResourceToolTest` | 6 | 元数据/参数验证/服务器未找到/错误处理 |
+| `McpPermissionPolicyTest` | 8 | 非MCP委托/允许列表/拒绝列表/优先级/allowAll |
+| `McpIntegrationTest` | 8 | 端到端: 配置→命名→JSON-RPC→工具桥接→权限→状态机 |
+| `SystemPromptBuilderTest` | 55 | 美团生活场景角色定义/搜索完整性三原则/工具使用原则/可用工具段（搜索/地图/MCP/Agent/Task）/语言段/CLAUDE.md 加载/MCP指令/3种组装方法/Agent prompt/段落顺序 |
+| `EnvironmentInfoTest` | 12 | CWD/Java版本/平台/模型名/Git检测/Shell/格式 |
 
-**总计：223 个测试，全部通过。**
+**总计：539 个测试，全部通过。**
 
 运行测试：
 ```bash
@@ -864,4 +1024,8 @@ mvn test
 
 11. **三级自适应压缩**：Micro Compact（清理过期工具结果）→ Session Memory Compact（零 API 调用替换）→ Full Compact（结构化摘要），Token 预算驱动的压缩决策链，与 TS 原版三级策略完全对齐。
 
-12. **223 项单元测试**：使用 ECHO_MODEL（无需真实 API 的 ModelAdapter lambda）+ 纯逻辑测试，覆盖 Agent 定义、注册、执行、任务管理、工具交互、消息通信、三级压缩全链路。
+12. **MCP 协议集成**：完整实现 MCP（Model Context Protocol）核心子集——零依赖手写 JSON-RPC 2.0 + 双传输层（stdio/SSE）+ 多服务器连接管理（批量连接、指数退避重连）+ 工具桥接（`McpToolBridge` 将 MCP 工具适配为 Java `Tool` 接口）+ 配置发现（`.mcp.json` + `~/.claude/settings.json`）+ MCP 感知权限策略，动态扩展 agent loop 的工具能力。
+
+13. **MCP 直连 + 工具名称映射**：Java 直连三个上游 MCP 服务器（xt-search SSE、mt-map Streamable HTTP + JWT OAuth、amap stdio），无需 Node.js 中间层。`MappedMcpTool` + `ToolMapping` 实现工具名映射（字面/模板）、系统参数注入、参数删除，将 12 个上游工具以 LLM 友好的名称暴露。`JwtTokenProvider` 零依赖实现 HS256 JWT + OAuth2 两步认证。
+
+14. **544 项单元测试**：使用 ECHO_MODEL（无需真实 API 的 ModelAdapter lambda）+ MockTransport（无需真实 MCP 服务器）+ 纯逻辑测试，覆盖 Agent 定义、注册、执行、任务管理、工具交互、消息通信、三级压缩全链路、MCP 协议全链路（SSE 双通道传输、Streamable HTTP 传输、JWT OAuth 认证、工具名称映射）、System Prompt 模块化构建（美团生活场景角色定义、搜索完整性原则、可用工具动态段、环境信息、CLAUDE.md 加载）。

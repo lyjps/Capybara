@@ -1,0 +1,504 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{{DESTINATION}} · {{DAYS}}天旅行计划</title>
+
+  <!-- Tailwind CSS -->
+  <link href="https://lf3-cdn-tos.bytecdntp.com/cdn/expire-1-M/tailwindcss/2.2.19/tailwind.min.css" rel="stylesheet">
+  <!-- Font Awesome -->
+  <link rel="stylesheet" href="https://lf6-cdn-tos.bytecdntp.com/cdn/expire-100-M/font-awesome/6.0.0/css/all.min.css">
+  <!-- 中文字体 -->
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@400;500;600;700&family=Noto+Sans+SC:wght@300;400;500;700&display=swap" rel="stylesheet">
+  <!-- Leaflet.js 地图 -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+  <!-- Mermaid.js -->
+  <script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
+
+  <style>
+    /* ===== CSS 变量 ===== */
+    :root {
+      --primary: #FF6B35;
+      --primary-light: #FFB088;
+      --primary-dark: #E55A2B;
+      --secondary: #004E89;
+      --secondary-light: #67A3D9;
+      --accent: #F7C948;
+      --accent-light: #FFF3CD;
+      --bg-warm: #FFF8F0;
+      --bg-cool: #F0F7FF;
+      --bg-white: #FFFFFF;
+      --text-dark: #2D3436;
+      --text-light: #636E72;
+      --text-muted: #B2BEC3;
+      --border-light: #E8EDF1;
+      --card-shadow: 0 4px 20px rgba(0,0,0,0.08);
+      --card-hover-shadow: 0 8px 30px rgba(0,0,0,0.12);
+      --radius-sm: 8px;
+      --radius-md: 16px;
+      --radius-lg: 24px;
+      --spacing-xs: 0.5rem;
+      --spacing-sm: 1rem;
+      --spacing-md: 1.5rem;
+      --spacing-lg: 2rem;
+      --spacing-xl: 3rem;
+    }
+
+    /* ===== 全局样式 ===== */
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Noto Sans SC', -apple-system, BlinkMacSystemFont, sans-serif;
+      color: var(--text-dark);
+      background: var(--bg-warm);
+      line-height: 1.7;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    h1, h2, h3, h4 {
+      font-family: 'Noto Serif SC', serif;
+      font-weight: 600;
+      line-height: 1.3;
+    }
+
+    /* ===== Hero 模块 ===== */
+    .hero {
+      background: linear-gradient(135deg, var(--secondary) 0%, var(--primary) 100%);
+      color: white;
+      padding: var(--spacing-xl) var(--spacing-md);
+      text-align: center;
+      position: relative;
+      overflow: hidden;
+    }
+    .hero::before {
+      content: '';
+      position: absolute;
+      top: -50%;
+      left: -50%;
+      width: 200%;
+      height: 200%;
+      background: radial-gradient(circle, rgba(255,255,255,0.1) 0%, transparent 70%);
+      animation: float 20s ease-in-out infinite;
+    }
+    @keyframes float {
+      0%, 100% { transform: translate(0, 0); }
+      50% { transform: translate(30px, -30px); }
+    }
+    .hero h1 {
+      font-size: 2.5rem;
+      font-weight: 700;
+      margin-bottom: var(--spacing-xs);
+      position: relative;
+    }
+    .hero .subtitle {
+      font-size: 1.1rem;
+      opacity: 0.9;
+      position: relative;
+    }
+    .hero .weather-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      background: rgba(255,255,255,0.2);
+      backdrop-filter: blur(10px);
+      padding: 0.5rem 1rem;
+      border-radius: 50px;
+      margin-top: var(--spacing-sm);
+      font-size: 0.9rem;
+      position: relative;
+    }
+
+    /* ===== 内容容器 ===== */
+    .container {
+      max-width: 768px;
+      margin: 0 auto;
+      padding: 0 var(--spacing-sm);
+    }
+
+    /* ===== 区块标题 ===== */
+    .section-title {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      margin: var(--spacing-xl) 0 var(--spacing-md);
+    }
+    .section-title i {
+      font-size: 1.5rem;
+      color: var(--primary);
+      width: 40px;
+      height: 40px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: var(--accent-light);
+      border-radius: 50%;
+    }
+    .section-title h2 {
+      font-size: 1.5rem;
+      color: var(--text-dark);
+    }
+
+    /* ===== 行程日卡片 ===== */
+    .day-card {
+      background: var(--bg-white);
+      border-radius: var(--radius-md);
+      box-shadow: var(--card-shadow);
+      margin-bottom: var(--spacing-md);
+      overflow: hidden;
+      transition: box-shadow 0.3s ease;
+    }
+    .day-card:hover {
+      box-shadow: var(--card-hover-shadow);
+    }
+    .day-header {
+      background: linear-gradient(135deg, var(--secondary) 0%, var(--secondary-light) 100%);
+      color: white;
+      padding: var(--spacing-sm) var(--spacing-md);
+      cursor: pointer;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .day-header h3 { font-size: 1.15rem; font-family: 'Noto Serif SC', serif; }
+    .day-header .toggle-icon { transition: transform 0.3s ease; }
+    .day-header.collapsed .toggle-icon { transform: rotate(-90deg); }
+    .day-content { padding: var(--spacing-md); }
+
+    /* ===== 时间轴 ===== */
+    .timeline { position: relative; padding-left: 2rem; }
+    .timeline::before {
+      content: '';
+      position: absolute;
+      left: 0.5rem;
+      top: 0;
+      bottom: 0;
+      width: 2px;
+      background: linear-gradient(to bottom, var(--primary), var(--secondary));
+    }
+    .timeline-item {
+      position: relative;
+      margin-bottom: var(--spacing-md);
+      padding-left: var(--spacing-sm);
+    }
+    .timeline-item::before {
+      content: '';
+      position: absolute;
+      left: -1.65rem;
+      top: 0.5rem;
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      background: var(--primary);
+      border: 2px solid white;
+      box-shadow: 0 0 0 3px var(--primary-light);
+    }
+    .timeline-item.meal::before { background: var(--accent); box-shadow: 0 0 0 3px var(--accent-light); }
+    .timeline-item.transport::before { background: var(--secondary); box-shadow: 0 0 0 3px var(--secondary-light); }
+
+    .timeline-time {
+      font-size: 0.85rem;
+      color: var(--primary);
+      font-weight: 600;
+      margin-bottom: 0.25rem;
+    }
+    .timeline-title {
+      font-size: 1.05rem;
+      font-weight: 600;
+      margin-bottom: 0.25rem;
+    }
+    .timeline-desc {
+      font-size: 0.9rem;
+      color: var(--text-light);
+    }
+    .timeline-tags {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+      margin-top: 0.5rem;
+    }
+    .tag {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.25rem;
+      padding: 0.2rem 0.6rem;
+      border-radius: 50px;
+      font-size: 0.75rem;
+      font-weight: 500;
+    }
+    .tag-price { background: #FFF3CD; color: #856404; }
+    .tag-time { background: #D1ECF1; color: #0C5460; }
+    .tag-tip { background: #F8D7DA; color: #721C24; }
+
+    /* ===== 地点导航链接 ===== */
+    .nav-link {
+      color: var(--secondary);
+      text-decoration: none;
+      cursor: pointer;
+      border-bottom: 1px dashed var(--secondary-light);
+      transition: color 0.2s;
+    }
+    .nav-link:hover { color: var(--primary); }
+    .nav-link i { margin-right: 0.25rem; font-size: 0.85rem; }
+
+    /* ===== 地图 ===== */
+    #travel-map {
+      width: 100%;
+      height: 400px;
+      border-radius: var(--radius-md);
+      box-shadow: var(--card-shadow);
+      z-index: 1;
+    }
+
+    /* ===== 餐厅/酒店信息卡片 ===== */
+    .info-card {
+      background: var(--bg-white);
+      border-radius: var(--radius-sm);
+      padding: var(--spacing-sm);
+      margin-bottom: var(--spacing-sm);
+      border-left: 4px solid var(--primary);
+      box-shadow: 0 2px 8px rgba(0,0,0,0.04);
+    }
+    .info-card.hotel-card {
+      border-left-color: var(--secondary);
+    }
+    .info-card .name {
+      font-weight: 600;
+      font-size: 1rem;
+      margin-bottom: 0.25rem;
+    }
+    .info-card .meta {
+      font-size: 0.85rem;
+      color: var(--text-light);
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.75rem;
+    }
+    .info-card .rating {
+      color: var(--accent);
+      font-weight: 600;
+    }
+    .info-card .price {
+      color: var(--primary);
+      font-weight: 600;
+    }
+    .info-card .deal-tag {
+      display: inline-block;
+      background: #E8F5E9;
+      color: #2E7D32;
+      padding: 0.15rem 0.5rem;
+      border-radius: 4px;
+      font-size: 0.75rem;
+      margin-top: 0.25rem;
+    }
+
+    /* ===== 预算表 ===== */
+    .budget-table {
+      width: 100%;
+      border-collapse: separate;
+      border-spacing: 0;
+      border-radius: var(--radius-sm);
+      overflow: hidden;
+      box-shadow: var(--card-shadow);
+    }
+    .budget-table th {
+      background: var(--secondary);
+      color: white;
+      padding: 0.75rem 1rem;
+      text-align: left;
+      font-weight: 500;
+    }
+    .budget-table td {
+      padding: 0.75rem 1rem;
+      border-bottom: 1px solid var(--border-light);
+      background: var(--bg-white);
+    }
+    .budget-table tr:last-child td {
+      font-weight: 700;
+      background: var(--bg-cool);
+    }
+
+    /* ===== 实用信息 ===== */
+    .checklist {
+      list-style: none;
+      padding: 0;
+    }
+    .checklist li {
+      display: flex;
+      align-items: flex-start;
+      gap: 0.75rem;
+      padding: 0.5rem 0;
+      font-size: 0.9rem;
+    }
+    .checklist li i {
+      color: var(--primary);
+      margin-top: 0.25rem;
+      min-width: 1rem;
+    }
+
+    /* ===== Mermaid 图表 ===== */
+    .mermaid {
+      background: var(--bg-white);
+      border-radius: var(--radius-md);
+      padding: var(--spacing-md);
+      box-shadow: var(--card-shadow);
+      overflow-x: auto;
+    }
+
+    /* ===== 加载占位样式 ===== */
+    .loading-placeholder {
+      background: var(--bg-white);
+      border-radius: var(--radius-md);
+      padding: var(--spacing-lg);
+      box-shadow: var(--card-shadow);
+      text-align: center;
+      color: var(--text-muted);
+    }
+    .loading-placeholder i {
+      font-size: 2rem;
+      margin-bottom: var(--spacing-sm);
+      animation: pulse 1.5s ease-in-out infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 0.4; }
+      50% { opacity: 1; }
+    }
+
+    /* ===== 页脚 ===== */
+    .footer {
+      text-align: center;
+      padding: var(--spacing-lg) var(--spacing-sm);
+      color: var(--text-muted);
+      font-size: 0.85rem;
+    }
+
+    /* ===== 响应式 ===== */
+    @media (max-width: 640px) {
+      .hero h1 { font-size: 1.75rem; }
+      .section-title h2 { font-size: 1.25rem; }
+      #travel-map { height: 300px; }
+      .container { padding: 0 0.75rem; }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- ===== Step 2: Hero（由 Edit 替换此占位符） ===== -->
+  <!-- {{HERO_CONTENT}} -->
+
+  <main class="container">
+
+    <!-- ===== Step 2: 行程概览（由 Edit 替换此占位符） ===== -->
+    <div class="section-title">
+      <i class="fas fa-route"></i>
+      <h2>行程概览</h2>
+    </div>
+    <!-- {{OVERVIEW_CARDS}} -->
+
+    <!-- ===== Step 3: 每日详细行程（由 Edit 替换此占位符） ===== -->
+    <div class="section-title">
+      <i class="fas fa-calendar-alt"></i>
+      <h2>详细行程</h2>
+    </div>
+    <!-- {{DAY_CARDS}} -->
+
+    <!-- ===== Step 4: 景点地图（由 Edit 替换此占位符） ===== -->
+    <div class="section-title">
+      <i class="fas fa-map-marked-alt"></i>
+      <h2>景点地图</h2>
+    </div>
+    <div id="travel-map"></div>
+
+    <!-- ===== Step 5: 交通信息（由 Edit 替换此占位符） ===== -->
+    <div class="section-title">
+      <i class="fas fa-bus-alt"></i>
+      <h2>交通指南</h2>
+    </div>
+    <!-- {{TRANSPORT_CONTENT}} -->
+
+    <!-- ===== Step 6: 住宿信息（由 Edit 替换此占位符） ===== -->
+    <div class="section-title">
+      <i class="fas fa-hotel"></i>
+      <h2>住宿推荐</h2>
+    </div>
+    <!-- {{HOTEL_CARDS}} -->
+
+    <!-- ===== Step 6: 餐饮推荐（由 Edit 替换此占位符） ===== -->
+    <div class="section-title">
+      <i class="fas fa-utensils"></i>
+      <h2>美食推荐</h2>
+    </div>
+    <!-- {{RESTAURANT_CARDS}} -->
+
+    <!-- ===== Step 7: 预算摘要（由 Edit 替换此占位符） ===== -->
+    <div class="section-title">
+      <i class="fas fa-wallet"></i>
+      <h2>预算摘要</h2>
+    </div>
+    <!-- {{BUDGET_TABLE}} -->
+
+    <!-- ===== Step 7: 行李清单（由 Edit 替换此占位符） ===== -->
+    <div class="section-title">
+      <i class="fas fa-suitcase-rolling"></i>
+      <h2>行李清单</h2>
+    </div>
+    <!-- {{PACKING_LIST}} -->
+
+    <!-- ===== Step 7: 实用信息（由 Edit 替换此占位符） ===== -->
+    <div class="section-title">
+      <i class="fas fa-info-circle"></i>
+      <h2>实用信息</h2>
+    </div>
+    <!-- {{PRACTICAL_INFO}} -->
+
+  </main>
+
+  <footer class="footer">
+    <p>🗺️ 由 AI 旅行规划师精心制作 · {{GENERATION_DATE}}</p>
+  </footer>
+
+  <script>
+    // ===== 导航功能 =====
+    function navigateTo(name, lat, lng) {
+      const ua = navigator.userAgent;
+      let url;
+      if (/android/i.test(ua)) {
+        url = `androidamap://navi?sourceApplication=travel&poiname=${encodeURIComponent(name)}&lat=${lat}&lon=${lng}&dev=0`;
+      } else if (/iphone|ipad|ipod/i.test(ua)) {
+        url = `iosamap://navi?sourceApplication=travel&poiname=${encodeURIComponent(name)}&lat=${lat}&lon=${lng}&dev=0`;
+      } else {
+        url = `https://uri.amap.com/navigation?to=${lng},${lat},${encodeURIComponent(name)}&mode=car&coordinate=gaode`;
+      }
+      window.location.href = url;
+    }
+
+    // ===== 日程折叠 =====
+    document.addEventListener('click', function(e) {
+      const header = e.target.closest('.day-header');
+      if (!header) return;
+      const content = header.nextElementSibling;
+      const icon = header.querySelector('.toggle-icon');
+      content.style.display = content.style.display === 'none' ? 'block' : 'none';
+      header.classList.toggle('collapsed');
+    });
+
+    // ===== Step 4: Leaflet 地图初始化（由 Edit 替换此占位符） =====
+    // {{MAP_INIT_SCRIPT}}
+
+    // ===== Mermaid 初始化 =====
+    mermaid.initialize({
+      startOnLoad: true,
+      theme: 'base',
+      themeVariables: {
+        primaryColor: '#FF6B35',
+        primaryTextColor: '#fff',
+        primaryBorderColor: '#E55A2B',
+        lineColor: '#004E89',
+        secondaryColor: '#F0F7FF',
+        tertiaryColor: '#FFF8F0'
+      }
+    });
+  </script>
+</body>
+</html>

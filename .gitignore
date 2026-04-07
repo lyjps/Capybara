@@ -2,3 +2,15 @@
 target/
 .DS_Store
 application.properties
+
+# Claude Code local config (contains permissions, plans, session data)
+.claude/
+
+# MCP config (contains internal IPs and secrets)
+.mcp.json
+
+# Stray compilation output at project root
+/com/
+
+# Local output files
+output/

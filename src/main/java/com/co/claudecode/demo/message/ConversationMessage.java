@@ -53,6 +53,16 @@ public record ConversationMessage(MessageRole role, List<ContentBlock> blocks) {
                 .toList();
     }
 
+    /**
+     * 提取消息中的工具引用块（由 ToolSearchTool 返回）。
+     */
+    public List<ToolReferenceBlock> toolReferences() {
+        return blocks.stream()
+                .filter(ToolReferenceBlock.class::isInstance)
+                .map(ToolReferenceBlock.class::cast)
+                .toList();
+    }
+
     public String plainText() {
         return blocks.stream()
                 .filter(TextBlock.class::isInstance)

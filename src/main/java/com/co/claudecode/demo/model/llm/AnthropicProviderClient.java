@@ -1,6 +1,8 @@
 package com.co.claudecode.demo.model.llm;
 
+import com.co.claudecode.demo.mcp.protocol.SimpleJsonParser;
 import com.co.claudecode.demo.message.ToolCallBlock;
+import com.co.claudecode.demo.tool.streaming.StreamingToolCallback;
 
 import java.io.BufferedReader;
 import java.io.IOException;
@@ -25,6 +27,13 @@ public final class AnthropicProviderClient extends AbstractLlmProviderClient {
 
     private static final String ANTHROPIC_VERSION = "2023-06-01";
     private static final Duration TIMEOUT = Duration.ofSeconds(300);
+
+    /** Maximum number of retries for rate-limited (429) or transient server errors (529). */
+    private static final int MAX_RETRIES = 5;
+    /** Base delay between retries (exponential backoff: base * 2^attempt). */
+    private static final long RETRY_BASE_DELAY_MS = 5_000;
+    /** Maximum delay cap for exponential backoff. */
+    private static final long RETRY_MAX_DELAY_MS = 60_000;
 
     private final HttpClient httpClient;
 
@@ -51,21 +60,54 @@ public final class AnthropicProviderClient extends AbstractLlmProviderClient {
         String endpoint = buildEndpoint();
         logRequest(request, endpoint);
 
-        try {
-            HttpResponse<String> httpResponse = doPost(endpoint, requestBody,
-                    HttpResponse.BodyHandlers.ofString());
+        for (int attempt = 0; ; attempt++) {
+            try {
+                HttpResponse<String> httpResponse = doPost(endpoint, requestBody,
+                        HttpResponse.BodyHandlers.ofString());
 
-            if (httpResponse.statusCode() != 200) {
-                throw new RuntimeException(
-                        "Anthropic API returned HTTP " + httpResponse.statusCode() + ": " + httpResponse.body());
+                if (isRetryable(httpResponse.statusCode()) && attempt < MAX_RETRIES) {
+                    long delay = computeRetryDelay(attempt, httpResponse);
+                    System.out.println("ANTHROPIC > Rate limited (HTTP " + httpResponse.statusCode()
+                            + "), retrying in " + (delay / 1000) + "s (attempt " + (attempt + 1)
+                            + "/" + MAX_RETRIES + ")...");
+                    Thread.sleep(delay);
+                    continue;
+                }
+
+                if (httpResponse.statusCode() != 200) {
+                    throw new RuntimeException(
+                            "Anthropic API returned HTTP " + httpResponse.statusCode() + ": " + httpResponse.body());
+                }
+
+                // Validate Content-Type — detect HTML/non-JSON responses early
+                String contentType = httpResponse.headers().firstValue("content-type").orElse("");
+                if (contentType.contains("text/html")) {
+                    String preview = httpResponse.body().length() > 500
+                            ? httpResponse.body().substring(0, 500) : httpResponse.body();
+                    throw new RuntimeException(
+                            "Anthropic API returned HTML instead of JSON (Content-Type: " + contentType
+                            + "). The base-url may be pointing to a web frontend, not an API endpoint. "
+                            + "Endpoint: " + endpoint + " | Response preview: " + preview);
+                }
+
+                return parseResponse(httpResponse.body());
+
+            } catch (IOException e) {
+                if (attempt < MAX_RETRIES) {
+                    long delay = computeRetryDelay(attempt, null);
+                    System.out.println("ANTHROPIC > Network error, retrying in " + (delay / 1000)
+                            + "s (attempt " + (attempt + 1) + "/" + MAX_RETRIES + "): " + e.getMessage());
+                    try { Thread.sleep(delay); } catch (InterruptedException ie) {
+                        Thread.currentThread().interrupt();
+                        throw new RuntimeException("Anthropic API request interrupted", ie);
+                    }
+                    continue;
+                }
+                throw new RuntimeException("Anthropic API network error: " + e.getMessage(), e);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new RuntimeException("Anthropic API request interrupted", e);
             }
-            return parseResponse(httpResponse.body());
-
-        } catch (IOException e) {
-            throw new RuntimeException("Anthropic API network error: " + e.getMessage(), e);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            throw new RuntimeException("Anthropic API request interrupted", e);
         }
     }
 
@@ -80,23 +122,56 @@ public final class AnthropicProviderClient extends AbstractLlmProviderClient {
         String endpoint = buildEndpoint();
         logRequest(request, endpoint);
 
-        try {
-            HttpResponse<java.io.InputStream> httpResponse = doPost(endpoint, requestBody,
-                    HttpResponse.BodyHandlers.ofInputStream());
+        for (int attempt = 0; ; attempt++) {
+            try {
+                HttpResponse<java.io.InputStream> httpResponse = doPost(endpoint, requestBody,
+                        HttpResponse.BodyHandlers.ofInputStream());
 
-            if (httpResponse.statusCode() != 200) {
-                String errorBody = new String(httpResponse.body().readAllBytes(), StandardCharsets.UTF_8);
-                throw new RuntimeException(
-                        "Anthropic API returned HTTP " + httpResponse.statusCode() + ": " + errorBody);
+                if (isRetryable(httpResponse.statusCode()) && attempt < MAX_RETRIES) {
+                    // Drain the error body for logging before retry
+                    String errorBody = new String(httpResponse.body().readAllBytes(), StandardCharsets.UTF_8);
+                    long delay = computeRetryDelay(attempt, httpResponse);
+                    System.out.println("ANTHROPIC > Rate limited (HTTP " + httpResponse.statusCode()
+                            + "), retrying in " + (delay / 1000) + "s (attempt " + (attempt + 1)
+                            + "/" + MAX_RETRIES + "): " + errorBody);
+                    Thread.sleep(delay);
+                    continue;
+                }
+
+                if (httpResponse.statusCode() != 200) {
+                    String errorBody = new String(httpResponse.body().readAllBytes(), StandardCharsets.UTF_8);
+                    throw new RuntimeException(
+                            "Anthropic API returned HTTP " + httpResponse.statusCode() + ": " + errorBody);
+                }
+
+                // Validate Content-Type — detect HTML/non-SSE responses early
+                String contentType = httpResponse.headers().firstValue("content-type").orElse("");
+                if (contentType.contains("text/html")) {
+                    String preview = new String(httpResponse.body().readNBytes(500), StandardCharsets.UTF_8);
+                    throw new RuntimeException(
+                            "Anthropic API returned HTML instead of SSE stream (Content-Type: " + contentType
+                            + "). The base-url may be pointing to a web frontend, not an API endpoint. "
+                            + "Endpoint: " + endpoint + " | Response preview: " + preview);
+                }
+
+                return parseSseStream(httpResponse.body(), callback);
+
+            } catch (IOException e) {
+                if (attempt < MAX_RETRIES) {
+                    long delay = computeRetryDelay(attempt, null);
+                    System.out.println("ANTHROPIC > Network error, retrying in " + (delay / 1000)
+                            + "s (attempt " + (attempt + 1) + "/" + MAX_RETRIES + "): " + e.getMessage());
+                    try { Thread.sleep(delay); } catch (InterruptedException ie) {
+                        Thread.currentThread().interrupt();
+                        throw new RuntimeException("Anthropic API request interrupted", ie);
+                    }
+                    continue;
+                }
+                throw new RuntimeException("Anthropic API network error: " + e.getMessage(), e);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new RuntimeException("Anthropic API request interrupted", e);
             }
-
-            return parseSseStream(httpResponse.body(), callback);
-
-        } catch (IOException e) {
-            throw new RuntimeException("Anthropic API network error: " + e.getMessage(), e);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            throw new RuntimeException("Anthropic API request interrupted", e);
         }
     }
 
@@ -186,11 +261,18 @@ public final class AnthropicProviderClient extends AbstractLlmProviderClient {
                 } else if ("content_block_stop".equals(currentEvent)) {
                     if ("tool_use".equals(currentBlockType) && currentToolName != null) {
                         Map<String, String> input = parseSimpleJsonObject(toolInputJsonBuffer.toString());
-                        toolCalls.add(new LlmResponse.ToolCallData(
+                        LlmResponse.ToolCallData tcd = new LlmResponse.ToolCallData(
                                 currentToolId != null ? currentToolId : "",
                                 currentToolName,
                                 input
-                        ));
+                        );
+                        toolCalls.add(tcd);
+
+                        // 流式工具执行：通知回调立即开始执行该工具
+                        if (callback instanceof StreamingToolCallback stc) {
+                            stc.onToolUseComplete(
+                                    new ToolCallBlock(tcd.id(), tcd.name(), tcd.input()));
+                        }
                     }
                     currentBlockType = null;
                     currentToolId = null;
@@ -310,13 +392,64 @@ public final class AnthropicProviderClient extends AbstractLlmProviderClient {
         return httpClient.send(httpRequest, handler);
     }
 
+    // ---- retry helpers ----
+
+    /**
+     * Returns {@code true} for HTTP status codes that should trigger a retry:
+     * <ul>
+     *   <li>429 — rate limited (too many requests)</li>
+     *   <li>529 — API overloaded (Anthropic-specific)</li>
+     *   <li>500, 502, 503 — transient server errors</li>
+     * </ul>
+     */
+    private static boolean isRetryable(int statusCode) {
+        return statusCode == 429 || statusCode == 529
+                || statusCode == 500 || statusCode == 502 || statusCode == 503;
+    }
+
+    /**
+     * Compute retry delay using exponential backoff with jitter.
+     * Respects {@code Retry-After} header if present.
+     */
+    private static long computeRetryDelay(int attempt, HttpResponse<?> response) {
+        // Check Retry-After header first (value in seconds)
+        if (response != null) {
+            String retryAfter = response.headers().firstValue("retry-after").orElse(null);
+            if (retryAfter != null) {
+                try {
+                    long retrySeconds = Long.parseLong(retryAfter.trim());
+                    if (retrySeconds > 0 && retrySeconds < 300) {
+                        return retrySeconds * 1000;
+                    }
+                } catch (NumberFormatException ignored) {
+                    // Fall through to exponential backoff
+                }
+            }
+        }
+        // Exponential backoff: base * 2^attempt, capped, with ±20% jitter
+        long delay = Math.min(RETRY_BASE_DELAY_MS * (1L << attempt), RETRY_MAX_DELAY_MS);
+        long jitter = (long) (delay * 0.2 * (Math.random() - 0.5)); // ±10% actual
+        return delay + jitter;
+    }
+
     // ---- endpoint ----
 
+    /**
+     * Build the full API endpoint URL.
+     *
+     * The base-url is treated as the API root (matching Anthropic SDK convention):
+     * - If it already ends with {@code /messages}, use as-is (explicit full path)
+     * - Otherwise, append {@code /v1/messages} (standard Anthropic API versioned path)
+     *
+     * Examples:
+     *   "https://api.anthropic.com"                → .../v1/messages
+     *   "https://aigc.sankuai.com/v1/anthropic/"    → .../v1/anthropic/v1/messages  (proxy root)
+     *   "https://example.com/v1/messages"           → .../v1/messages  (already complete)
+     */
     private String buildEndpoint() {
         String baseUrl = runtimeConfig().baseUrl();
         if (baseUrl.endsWith("/")) baseUrl = baseUrl.substring(0, baseUrl.length() - 1);
         if (baseUrl.endsWith("/messages")) return baseUrl;
-        if (!baseUrl.contains("/v1")) return baseUrl + "/v1/messages";
         return baseUrl + "/v1/messages";
     }
 
@@ -589,9 +722,11 @@ public final class AnthropicProviderClient extends AbstractLlmProviderClient {
         return null;
     }
 
+    /**
+     * JSON 字符串转义，委托给 {@link SimpleJsonParser#escapeJson(String)}。
+     * 消除与 SimpleJsonParser 的重复实现。
+     */
     private static String escapeJson(String value) {
-        if (value == null) return "";
-        return value.replace("\\", "\\\\").replace("\"", "\\\"")
-                .replace("\n", "\\n").replace("\r", "\\r").replace("\t", "\\t");
+        return SimpleJsonParser.escapeJson(value);
     }
 }

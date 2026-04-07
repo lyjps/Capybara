@@ -7,6 +7,7 @@ import com.co.claudecode.demo.tool.Tool;
 import com.co.claudecode.demo.tool.ToolExecutionContext;
 import com.co.claudecode.demo.tool.ToolOrchestrator;
 import com.co.claudecode.demo.tool.ToolRegistry;
+import com.co.claudecode.demo.prompt.SystemPromptBuilder;
 
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
@@ -31,7 +32,12 @@ import java.util.function.Consumer;
  */
 public final class SubAgentRunner implements AutoCloseable {
 
-    private final ModelAdapter modelAdapter;
+    // ---- 子 Agent 常量 ----
+    private static final int SUB_AGENT_CONTEXT_MAX_MESSAGES = 24;
+    private static final int SUB_AGENT_COMPACTOR_THRESHOLD = 12;
+    private static final int SUB_TOOL_ORCHESTRATOR_CONCURRENCY = 2;
+
+    private ModelAdapter modelAdapter;
     private final PermissionPolicy permissionPolicy;
     private final ToolExecutionContext parentContext;
     private final AgentTaskRegistry taskRegistry;
@@ -53,6 +59,19 @@ public final class SubAgentRunner implements AutoCloseable {
     }
 
     /**
+     * 延迟注入 ModelAdapter。
+     * <p>
+     * 用于解决循环依赖：SubAgentRunner 需要 ModelAdapter，
+     * 但 ModelAdapter 需要 ToolRegistry，ToolRegistry 又需要 SubAgentRunner 创建的 AgentTool。
+     * 构造时传 null，初始化完成后通过此方法注入。
+     *
+     * @param modelAdapter 模型适配器
+     */
+    public void setModelAdapter(ModelAdapter modelAdapter) {
+        this.modelAdapter = modelAdapter;
+    }
+
+    /**
      * 同步执行子 Agent。
      * <p>
      * 在当前线程创建独立的 Memory + Engine，运行 Agent 循环直到完成或超时。
@@ -65,6 +84,39 @@ public final class SubAgentRunner implements AutoCloseable {
         AgentTask agentTask = new AgentTask(agentId, name, agentDef.agentType(), prompt);
         taskRegistry.register(agentTask);
 
+        return executeWithTiming(agentDef, prompt, agentId, agentTask, eventSink);
+    }
+
+    /**
+     * 异步执行子 Agent。
+     * <p>
+     * 在线程池中启动独立 Agent，立即返回 {@link AsyncAgentHandle}（含 agentId）。
+     * 调用方可通过 agentId 跟踪进度或向其发送消息。
+     * 对应 TS 原版 run_in_background=true 的路径。
+     */
+    public AsyncAgentHandle runAsync(AgentDefinition agentDef,
+                                     String prompt,
+                                     String name,
+                                     Consumer<String> eventSink) {
+        String agentId = AgentTaskRegistry.generateAgentId();
+        AgentTask agentTask = new AgentTask(agentId, name, agentDef.agentType(), prompt);
+        taskRegistry.register(agentTask);
+
+        CompletableFuture<AgentResult> future = CompletableFuture.supplyAsync(
+                () -> executeWithTiming(agentDef, prompt, agentId, agentTask, eventSink),
+                executor);
+
+        return new AsyncAgentHandle(agentId, agentDef.agentType(), future);
+    }
+
+    /**
+     * 统一的计时 + 异常处理逻辑，消除 runSync/runAsync 中的代码重复。
+     */
+    private AgentResult executeWithTiming(AgentDefinition agentDef,
+                                           String prompt,
+                                           String agentId,
+                                           AgentTask agentTask,
+                                           Consumer<String> eventSink) {
         long startTime = System.currentTimeMillis();
         try {
             String content = executeAgent(agentDef, prompt, agentId, agentTask, eventSink);
@@ -83,42 +135,6 @@ public final class SubAgentRunner implements AutoCloseable {
     }
 
     /**
-     * 异步执行子 Agent。
-     * <p>
-     * 在线程池中启动独立 Agent，立即返回 {@link AsyncAgentHandle}（含 agentId）。
-     * 调用方可通过 agentId 跟踪进度或向其发送消息。
-     * 对应 TS 原版 run_in_background=true 的路径。
-     */
-    public AsyncAgentHandle runAsync(AgentDefinition agentDef,
-                                     String prompt,
-                                     String name,
-                                     Consumer<String> eventSink) {
-        String agentId = AgentTaskRegistry.generateAgentId();
-        AgentTask agentTask = new AgentTask(agentId, name, agentDef.agentType(), prompt);
-        taskRegistry.register(agentTask);
-
-        CompletableFuture<AgentResult> future = CompletableFuture.supplyAsync(() -> {
-            long startTime = System.currentTimeMillis();
-            try {
-                String content = executeAgent(agentDef, prompt, agentId, agentTask, eventSink);
-                long duration = System.currentTimeMillis() - startTime;
-                AgentResult result = AgentResult.completed(agentId, agentDef.agentType(),
-                        content, 0, duration, 0);
-                agentTask.markCompleted(result);
-                return result;
-            } catch (Exception e) {
-                long duration = System.currentTimeMillis() - startTime;
-                AgentResult result = AgentResult.failed(agentId, agentDef.agentType(),
-                        e.getMessage(), duration);
-                agentTask.markFailed(result);
-                return result;
-            }
-        }, executor);
-
-        return new AsyncAgentHandle(agentId, agentDef.agentType(), future);
-    }
-
-    /**
      * 核心执行逻辑：创建独立环境，运行 Agent 循环。
      */
     private String executeAgent(AgentDefinition agentDef,
@@ -133,15 +149,15 @@ public final class SubAgentRunner implements AutoCloseable {
         ToolRegistry toolRegistry = new ToolRegistry(filteredTools);
 
         // 2. 创建独立的 ToolOrchestrator
-        try (ToolOrchestrator orchestrator = new ToolOrchestrator(toolRegistry, permissionPolicy, 2)) {
+        try (ToolOrchestrator orchestrator = new ToolOrchestrator(toolRegistry, permissionPolicy, SUB_TOOL_ORCHESTRATOR_CONCURRENCY)) {
             // 3. 创建独立的 ConversationMemory
-            ConversationMemory memory = new ConversationMemory(new SimpleContextCompactor(), 24, 12);
+            ConversationMemory memory = new ConversationMemory(new SimpleContextCompactor(), SUB_AGENT_CONTEXT_MAX_MESSAGES, SUB_AGENT_COMPACTOR_THRESHOLD);
 
-            // 4. 注入系统提示词
-            String systemPrompt = agentDef.systemPrompt();
+            // 4. 注入系统提示词（模块化构建，含环境信息和 CLAUDE.md）
+            String systemPrompt = SystemPromptBuilder.buildAgentPrompt(
+                    agentDef, parentContext.workspaceRoot(), null);
             if (!systemPrompt.isBlank()) {
-                memory.append(ConversationMessage.system(systemPrompt
-                        + "\n工作区目录: " + parentContext.workspaceRoot()));
+                memory.append(ConversationMessage.system(systemPrompt));
             }
 
             // 5. 创建 AgentEngine 并运行
